@@ -79,44 +79,56 @@ if plt_pts:
         if thermo_on:
             T = data[:,6]
 
-        # Plot 1: Velocities and Temperature
-        fig = plt.figure(figsize=(10,6))
-        plt.plot(time, u, label='u-velocity', linewidth=0.5)
-        plt.plot(time, v, label='v-velocity', linewidth=0.5)
-        plt.plot(time, w, label='w-velocity', linewidth=0.5)
+        # Create subplots for all variables
+        num_subplots = 6 if thermo_on else 5
+        fig, axes = plt.subplots(num_subplots, 1, figsize=(10, 3*num_subplots), sharex=True)
+
+        # Subplot 0: u-velocity
+        axes[0].plot(time, u, label='u-velocity', linewidth=1, color='C0')
+        axes[0].set_ylabel('u-velocity')
+        axes[0].legend()
+        axes[0].grid()
+
+        # Subplot 1: v-velocity
+        axes[1].plot(time, v, label='v-velocity', linewidth=1, color='C1')
+        axes[1].set_ylabel('v-velocity')
+        axes[1].legend()
+        axes[1].grid()
+
+        # Subplot 2: w-velocity
+        axes[2].plot(time, w, label='w-velocity', linewidth=1, color='C2')
+        axes[2].set_ylabel('w-velocity')
+        axes[2].legend()
+        axes[2].grid()
+
+        # Subplot 3: Pressure
+        axes[3].plot(time, p, label='pressure', linewidth=1, color='C3')
+        axes[3].set_ylabel('Pressure')
+        axes[3].legend()
+        axes[3].grid()
+
+        # Subplot 4: Pressure Correction
+        axes[4].plot(time, phi, label='press. corr.', linewidth=1, color='C4')
+        axes[4].set_ylabel('Pressure Correction')
+        axes[4].legend()
+        axes[4].grid()
+
         if thermo_on:
-            plt.plot(time, T, label='temperature', linewidth=0.5)
-        plt.xlabel('Time')
-        plt.ylabel('Velocity / Temperature')
-        plt.title(f'{file} - Velocity')
-        plt.legend()
-        plt.grid()
-        fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.dat','_velocity_temp_plot')}.png', dpi=300, bbox_inches='tight')
+            # Subplot 5: Temperature
+            axes[5].plot(time, T, label='temperature', linewidth=1, color='C5')
+            axes[5].set_ylabel('Temperature')
+            axes[5].legend()
+            axes[5].grid()
+            axes[5].set_xlabel('Time')
+        else:
+            axes[4].set_xlabel('Time')
+
+        fig.suptitle(f'{file} - Monitor Point Data', fontsize=14)
+        fig.tight_layout()
+        fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.dat','_plot')}.png', dpi=300, bbox_inches='tight')
         plt.close(fig)
 
-        # Plot 2: Pressure
-        fig = plt.figure(figsize=(10,6))
-        plt.plot(time, p, label='pressure', linewidth=0.5, color='C3')
-        plt.xlabel('Time')
-        plt.ylabel('Pressure')
-        plt.title(f'{file} - Pressure')
-        plt.legend()
-        plt.grid()
-        fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.dat','_pressure_plot')}.png', dpi=300, bbox_inches='tight')
-        plt.close(fig)
-
-        # Plot 3: Pressure Correction
-        fig = plt.figure(figsize=(10,6))
-        plt.plot(time, phi, label='press. corr.', linewidth=0.5, color='C4')
-        plt.xlabel('Time')
-        plt.ylabel('Pressure Correction')
-        plt.title(f'{file} - Pressure Correction')
-        plt.legend()
-        plt.grid()
-        fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.dat','_pressure_corr_plot')}.png', dpi=300, bbox_inches='tight')
-        plt.close(fig)
-
-        print(f'Saved 3 plots for {file}')
+        print(f'Saved subplot figure for {file}')
 
 if plt_bulk:
     for file in blk_files:
@@ -133,19 +145,43 @@ if plt_bulk:
                 T = blk_data[:,4]
                 h = blk_data[:,5]
 
-            plt.figure(figsize=(10,6))
-            plt.plot(time, MKE, label='Mean Kinetic Energy', linewidth=0.5)
-            plt.plot(time, qx, label='Bulk Velocity', linewidth=0.5)
+            # Create subplots for bulk quantities
+            num_subplots = 4 if thermo_on else 2
+            fig, axes = plt.subplots(num_subplots, 1, figsize=(10, 3*num_subplots), sharex=True)
+
+            # Subplot 0: Mean Kinetic Energy
+            axes[0].plot(time, MKE, label='Mean Kinetic Energy', linewidth=1, color='C0')
+            axes[0].set_ylabel('Mean Kinetic Energy')
+            axes[0].legend()
+            axes[0].grid()
+
+            # Subplot 1: Bulk Velocity and Density * Bulk Velocity (on same plot)
+            axes[1].plot(time, qx, label='Bulk Velocity', linewidth=1, color='C1')
             if thermo_on:
-                plt.plot(time, T, label='Bulk Temperature', linewidth=0.5)
-                plt.plot(time, h, label='Bulk Enthalpy', linewidth=0.5)
-                plt.plot(time, gx, label='Density * Bulk Velocity', linewidth=0.5)
-            plt.xlabel('Time')
-            plt.ylabel('Bulk Flow Variables')
-            plt.title('Bulk Quantities')
-            plt.legend()
-            plt.grid()
-            plt.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.log','_plot')}.png', dpi=300)
+                axes[1].plot(time, gx, label='Density * Bulk Velocity', linewidth=1, color='C2')
+            axes[1].set_ylabel('Velocity')
+            axes[1].legend()
+            axes[1].grid()
+
+            if thermo_on:
+                # Subplot 2: Bulk Temperature
+                axes[2].plot(time, T, label='Bulk Temperature', linewidth=1, color='C3')
+                axes[2].set_ylabel('Bulk Temperature')
+                axes[2].legend()
+                axes[2].grid()
+
+                # Subplot 3: Bulk Enthalpy
+                axes[3].plot(time, h, label='Bulk Enthalpy', linewidth=1, color='C4')
+                axes[3].set_ylabel('Bulk Enthalpy')
+                axes[3].legend()
+                axes[3].grid()
+                axes[3].set_xlabel('Time')
+            else:
+                axes[1].set_xlabel('Time')
+
+            fig.suptitle('Bulk Quantities', fontsize=14)
+            fig.tight_layout()
+            fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.log','_plot')}.png', dpi=300)
             print(f'Saved bulk history plot for {file}')
         
         if file == 'domain1_monitor_change_history.log':
@@ -154,16 +190,31 @@ if plt_bulk:
             mass_chng_rt = blk_data[:,4]
             KE_chng_rt = blk_data[:,5]
 
-            plt.figure(figsize=(10,6))
-            plt.plot(time, mass_cons, label='Mass Conservation', linewidth=0.5)
-            #plt.plot(time, mass_chng_rt, label='Mass Change Rate', linewidth=0.5)
-            #plt.plot(time, KE_chng_rt, label='Kinetic Energy Change Rate', linewidth=0.5)
-            plt.xlabel('Time')
-            plt.ylabel('Change History Variables')
-            plt.title('Change History')
-            plt.legend()
-            plt.grid()
-            plt.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.log','_plot')}.png', dpi=300)
+            # Create subplots for change history
+            fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
+
+            # Subplot 0: Mass Conservation
+            axes[0].plot(time, mass_cons, label='Mass Conservation', linewidth=1, color='C0')
+            axes[0].set_ylabel('Mass Conservation')
+            axes[0].legend()
+            axes[0].grid()
+
+            # Subplot 1: Mass Change Rate
+            axes[1].plot(time, mass_chng_rt, label='Mass Change Rate', linewidth=1, color='C1')
+            axes[1].set_ylabel('Mass Change Rate')
+            axes[1].legend()
+            axes[1].grid()
+
+            # Subplot 2: Kinetic Energy Change Rate
+            axes[2].plot(time, KE_chng_rt, label='Kinetic Energy Change Rate', linewidth=1, color='C2')
+            axes[2].set_ylabel('KE Change Rate')
+            axes[2].legend()
+            axes[2].grid()
+            axes[2].set_xlabel('Time')
+
+            fig.suptitle('Change History', fontsize=14)
+            fig.tight_layout()
+            fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.log','_plot')}.png', dpi=300)
             print(f'Saved change history plot for {file}')
 
 print('='*100)
