@@ -11,7 +11,7 @@ Scripts:
 
 turb_stats.py: Main post-processing script to provide velocity, temperature & Reynolds stress profiles from CHAPSim2 text file output. Input parameters, cases for comparison etc. on config.py file. Plots saved in turb_stats_plots/ and to file path.
 
-monitor_points.py: Plotting for bulk and point monitors. Input at the top of the script. Plots saved under monitor_point_plots/ and file path.
+monitor_points.py: Plotting for bulk and point monitors. Run the script in the directory containing monitor point files or specify a path to files.
 
 thermo_tools.py: Property functions for liquid lithium, functionality to output NIST format data file, convert a given Grashof number to constant wall temperature difference (channel flow), calculate Prandtl and Fourier numbers.
 

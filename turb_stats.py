@@ -24,9 +24,11 @@ class Config:
     """Configuration wrapper for all settings"""
     # File paths and cases
     folder_path: str
+    input_format: str
     cases: List[str]
     timesteps: List[str]
-    quantities: List[str]
+    thermo_on: bool
+    mhd_on: bool
     forcing: str
     Re: List[str]
     ref_temp: str
@@ -66,9 +68,11 @@ class Config:
         """Create Config from imported config module"""
         return cls(
             folder_path=config_module.folder_path,
+            input_format=config_module.input_format,
             cases=config_module.cases,
             timesteps=config_module.timesteps,
-            quantities=config_module.quantities,
+            thermo_on=config_module.thermo_on,
+            mhd_on=config_module.mhd_on,
             forcing=config_module.forcing,
             Re=config_module.Re,
             ref_temp=config_module.ref_temp,
@@ -95,7 +99,6 @@ class Config:
             mhd_NK_ref_on=config_module.mhd_NK_ref_on,
             mkm180_ch_ref_on=config_module.mkm180_ch_ref_on,
         )
-
 
 @dataclass
 class PlotConfig:
@@ -171,31 +174,67 @@ class PlotConfig:
         """Returns tuple of all color schemes with black first for plotting a reference"""
         return (self.colors_blck, self.colors_1, self.colors_2, self.colors_3, self.colors_4)
 
-
 # =====================================================================================================================================================
-# DATA MANAGEMENT CLASSES
+# DATA LOADING & MANAGEMENT
 # =====================================================================================================================================================
 
-class TurbulenceData:
-    """Manages time-space averaged data loading and access"""
+def create_data_loader(config: Config):
+    """
+    Factory function to create the appropriate data loader based on input_format.
 
-    def __init__(self, folder_path: str, cases: List[str], timesteps: List[str], quantities: List[str]):
+    Args:
+        config: Configuration object
+
+    Returns:
+        Data loader instance (TurbulenceTextData or TurbulenceXDMFData)
+    """
+    fmt = config.input_format.lower()
+
+    if fmt in ['xdmf', 'visu']:
+        print("Using XDMF data loader...")
+        return TurbulenceXDMFData(
+            config.folder_path,
+            config.cases,
+            config.timesteps
+        )
+    elif fmt in ['dat', 'text']:
+        print("Using text (.dat) data loader...")
+        return TurbulenceTextData(
+            config.folder_path,
+            config.cases,
+            config.timesteps,
+            config.thermo_on
+        )
+    else:
+        raise ValueError(f"Unknown input_format: '{config.input_format}'. Must be 'dat', 'text', 'xdmf', or 'visu'")
+    
+
+class TurbulenceTextData:
+    """Manages time-space averaged data loading and access from .dat files"""
+
+    def __init__(self, folder_path: str, cases: List[str], timesteps: List[str], thermo_on: bool):
         self.folder_path = folder_path
         self.cases = cases
         self.timesteps = timesteps
-        self.quantities = quantities
-        self.data: Dict[Tuple[str, str, str], np.ndarray] = {}
+        self.quantities = ut.get_quantities(thermo_on)
+        # Nested structure: {case_timestep: {quantity: array}}
+        self.data: Dict[str, Dict[str, np.ndarray]] = {}
 
     def load_all(self) -> None:
         """Load all time-space averaged data files"""
         for case in self.cases:
             for timestep in self.timesteps:
+                # Create nested key for this case/timestep
+                key = f"{case}_{timestep}"
+                if key not in self.data:
+                    self.data[key] = {}
+
                 for quantity in self.quantities:
                     self._load_single(case, quantity, timestep)
 
     def _load_single(self, case: str, quantity: str, timestep: str) -> None:
         """Load a single data file"""
-        key = (case, quantity, timestep)
+        key = f"{case}_{timestep}"
         file_path = ut.data_filepath(self.folder_path, case, quantity, timestep)
 
         print(f"Looking for files in: {file_path}")
@@ -203,7 +242,9 @@ class TurbulenceData:
         if os.path.isfile(file_path):
             data = ut.load_ts_avg_data(file_path)
             if data is not None:
-                self.data[key] = data
+                if key not in self.data:
+                    self.data[key] = {}
+                self.data[key][quantity] = data
             else:
                 print(f'.dat file is empty for {case}, {timestep}, {quantity}')
         else:
@@ -211,16 +252,87 @@ class TurbulenceData:
 
     def get(self, case: str, quantity: str, timestep: str) -> Optional[np.ndarray]:
         """Get specific data array"""
-        return self.data.get((case, quantity, timestep))
+        key = f"{case}_{timestep}"
+        if key in self.data and quantity in self.data[key]:
+            return self.data[key][quantity]
+        return None
 
     def has(self, case: str, quantity: str, timestep: str) -> bool:
         """Check if data exists"""
-        return (case, quantity, timestep) in self.data
+        key = f"{case}_{timestep}"
+        return key in self.data and quantity in self.data[key]
 
     def keys(self):
-        """Return all data keys"""
+        """Return all data keys (case_timestep format)"""
         return self.data.keys()
 
+class TurbulenceXDMFData:
+    """Manages all data from .xdmf files"""
+
+    def __init__(self, folder_path: str, cases: List[str], timesteps: List[str]):
+        self.folder_path = folder_path
+        self.cases = cases
+        self.timesteps = timesteps
+        # Nested structure: {case_timestep: {variable: array}}
+        self.data: Dict[str, Dict[str, np.ndarray]] = {}
+        self.grid_info: Dict = {}
+
+    def load_all(self) -> None:
+        """Load all XDMF files for all cases and timesteps"""
+        for case in self.cases:
+            for timestep in self.timesteps:
+                self._load_single(case, timestep)
+
+    def _load_single(self, case: str, timestep: str) -> None:
+        """Load XDMF files for a single case and timestep"""
+        key = f"{case}_{timestep}"
+
+        # Get file paths for this case/timestep
+        file_names = ut.visu_file_paths(self.folder_path, case, timestep)
+
+        # Check which files exist
+        existing_files = [f for f in file_names if os.path.isfile(f)]
+
+        if not existing_files:
+            print(f'No .xdmf files found for {case}, {timestep}')
+            return
+
+        # Load the XDMF files
+        arrays, grid_info = ut.read_xdmf_extract_numpy_arrays(file_names, case=case, timestep=timestep)
+
+        if arrays and key in arrays:
+            self.data[key] = arrays[key]
+
+            # Store grid info if not already stored
+            if not self.grid_info and grid_info:
+                self.grid_info = grid_info
+
+            print(f"Loaded {len(arrays[key])} variables from XDMF files for {case}, {timestep}")
+        else:
+            print(f'No arrays extracted from XDMF files for {case}, {timestep}')
+
+    def get(self, case: str, variable: str, timestep: str) -> Optional[np.ndarray]:
+        """Get specific data array"""
+        key = f"{case}_{timestep}"
+        if key in self.data and variable in self.data[key]:
+            return self.data[key][variable]
+        return None
+
+    def has(self, case: str, variable: str, timestep: str) -> bool:
+        """Check if data exists"""
+        key = f"{case}_{timestep}"
+        return key in self.data and variable in self.data[key]
+
+    def keys(self):
+        """Return all data keys (case_timestep format)"""
+        return self.data.keys()
+
+    def get_variables(self, case: str, timestep: str) -> List[str]:
+        """Get list of all variables available for a case/timestep"""
+        key = f"{case}_{timestep}"
+        if key in self.data:
+            return list(self.data[key].keys())
+        return []
 
 class ReferenceData:
     """Manages all reference datasets"""
@@ -316,7 +428,6 @@ class ReferenceData:
         except Exception as e:
             print(f"NK mhd reference is disabled or required data is missing: {e}")
 
-
 # =====================================================================================================================================================
 # TURBULENCE STATISTICS CLASSES
 # =====================================================================================================================================================
@@ -336,7 +447,7 @@ class TurbStatistic(ABC):
         """Compute the statistic from required data"""
         pass
 
-    def compute_for_case(self, case: str, timestep: str, data_loader: TurbulenceData) -> bool:
+    def compute_for_case(self, case: str, timestep: str, data_loader: TurbulenceTextData) -> bool:
         """Compute statistic for a specific case and timestep"""
         # Gather required data
         data_dict = {}
@@ -372,7 +483,7 @@ class ReynoldsStressuu11(TurbStatistic):
         super().__init__('u_prime_sq', "<u'u'>", ['u1', 'uu11'])
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        return op.compute_u_prime_sq(data_dict['u1'], data_dict['uu11'])
+        return op.compute_normal_stress(data_dict['u1'], data_dict['uu11'])
 
 class ReynoldsStressuu12(TurbStatistic):
     """Reynolds stress u'v'"""
@@ -381,7 +492,7 @@ class ReynoldsStressuu12(TurbStatistic):
         super().__init__('u_prime_v_prime', "<u'v'>", ['u1', 'u2', 'uu12'])
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        return op.compute_u_prime_v_prime(data_dict['u1'], data_dict['u2'], data_dict['uu12'])
+        return op.compute_shear_stress(data_dict['u1'], data_dict['u2'], data_dict['uu12'])
 
 class ReynoldsStressuu22(TurbStatistic):
     """Reynolds stress v'v'"""
@@ -390,7 +501,7 @@ class ReynoldsStressuu22(TurbStatistic):
         super().__init__('v_prime_sq', "<v'v'>", ['u2', 'uu22'])
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        return op.compute_v_prime_sq(data_dict['u2'], data_dict['uu22'])
+        return op.compute_normal_stress(data_dict['u2'], data_dict['uu22'])
 
 class ReynoldsStressuu33(TurbStatistic):
     """Reynolds stress w'w'"""
@@ -399,7 +510,7 @@ class ReynoldsStressuu33(TurbStatistic):
         super().__init__('w_prime_sq', "<w'w'>", ['u3', 'uu33'])
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        return op.compute_w_prime_sq(data_dict['u3'], data_dict['uu33'])
+        return op.compute_normal_stress(data_dict['u3'], data_dict['uu33'])
     
 class TurbulentKineticEnergy(TurbStatistic):
     """Turbulent Kinetic Energy (TKE)"""
@@ -408,9 +519,9 @@ class TurbulentKineticEnergy(TurbStatistic):
         super().__init__('TKE', 'k', ['u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33'])
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        u_prime_sq = op.compute_u_prime_sq(data_dict['u1'], data_dict['uu11'])
-        v_prime_sq = op.compute_v_prime_sq(data_dict['u2'], data_dict['uu22'])
-        w_prime_sq = op.compute_w_prime_sq(data_dict['u3'], data_dict['uu33'])
+        u_prime_sq = op.compute_normal_stress(data_dict['u1'], data_dict['uu11'])
+        v_prime_sq = op.compute_normal_stress(data_dict['u2'], data_dict['uu22'])
+        w_prime_sq = op.compute_normal_stress(data_dict['u3'], data_dict['uu33'])
         return op.compute_tke(u_prime_sq, v_prime_sq, w_prime_sq)
 
 class Temperature(TurbStatistic):
@@ -428,6 +539,9 @@ class Temperature(TurbStatistic):
             undim_temp = op.read_profile(data_dict['T'])
             return undim_temp * self.ref_temp
 
+#class TKE_Production(TurbStatistic):
+    
+
 # =====================================================================================================================================================
 # PIPELINE CLASS
 # =====================================================================================================================================================
@@ -435,7 +549,7 @@ class Temperature(TurbStatistic):
 class TurbulenceStatsPipeline:
     """Orchestrates the computation and processing of turbulence statistics"""
 
-    def __init__(self, config: Config, data_loader: TurbulenceData):
+    def __init__(self, config: Config, data_loader: TurbulenceTextData):
         self.config = config
         self.data_loader = data_loader
         self.statistics: List[TurbStatistic] = []
@@ -510,7 +624,7 @@ class TurbulenceStatsPipeline:
 
                 # Print flow info
                 cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data, self.config.forcing)
-                op.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep)
+                ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep)
 
     def get_statistic(self, name: str) -> Optional[TurbStatistic]:
         """Get a specific statistic by name"""
@@ -519,7 +633,6 @@ class TurbulenceStatsPipeline:
                 return stat
         return None
 
-
 # =====================================================================================================================================================
 # PLOTTING CLASS
 # =====================================================================================================================================================
@@ -527,7 +640,7 @@ class TurbulenceStatsPipeline:
 class TurbulencePlotter:
     """Handles all plotting logic for turbulence statistics"""
 
-    def __init__(self, config: Config, plot_config: PlotConfig, data_loader: TurbulenceData):
+    def __init__(self, config: Config, plot_config: PlotConfig, data_loader: TurbulenceTextData):
         self.config = config
         self.plot_config = plot_config
         self.data_loader = data_loader
@@ -725,7 +838,7 @@ class TurbulencePlotter:
     def _get_color(self, case: str, stat_name: str) -> str:
         """Get colour for a case and statistic"""
         if len(self.config.cases) <= len(self.plot_config.colours) and stat_name in self.plot_config.stat_labels:
-            colour_set = op.get_col(case, self.config.cases, self.plot_config.colours)
+            colour_set = ut.get_col(case, self.config.cases, self.plot_config.colours)
             return colour_set[stat_name]
         else:
             return np.random.choice(list(mcolors.CSS4_COLORS.keys()))
@@ -762,6 +875,7 @@ class TurbulencePlotter:
         plt.show()
 
 
+
 # =====================================================================================================================================================
 # MAIN EXECUTION
 # =====================================================================================================================================================
@@ -776,14 +890,9 @@ def main():
     print("TURBULENCE STATISTICS PROCESSING")
     print("="*120)
 
-    # Load turbulence data
+    # Load turbulence data using the appropriate loader
     print("\nLoading turbulence data...")
-    data_loader = TurbulenceData(
-        config.folder_path,
-        config.cases,
-        config.timesteps,
-        config.quantities
-    )
+    data_loader = create_data_loader(config)
     data_loader.load_all()
 
     # Load reference data

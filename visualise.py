@@ -23,11 +23,6 @@ visualisation_on = False
 #instant_press_on = False
 #instant_phi_on = False
 
-# analytical input -- currently doesn't work
-# Analytical_lam_mhd_on = False
-# Analytical_lam_Ha = [4.0, 6.0, 8.0]
-# Ana_Re_tau = 150
-
 # 3D visualisation data (.xdmf files)
 
 visu_data = {}
@@ -50,18 +45,22 @@ if visualisation_on:
                 print(f'No .xdmf file found for {file}')
 
             if existing_files:
-                arrays, grid_info_cur = ut.read_xdmf_extract_numpy_arrays(file_names)
+                # Pass case and timestep to create nested dictionary structure
+                arrays, grid_info_cur = ut.read_xdmf_extract_numpy_arrays(file_names, case=case, timestep=timestep)
 
                 if arrays:
-                    # Store arrays with timestep prefix
-                    key_arrays = {f"{key}": value for key, value in arrays.items()}
-                    visu_data.update(key_arrays)
-                    
+                    # Update visu_data with nested dictionary
+                    # arrays is now {'case_timestep': {'var1': array1, 'var2': array2, ...}}
+                    visu_data.update(arrays)
+
                     # Store grid info (should be same for all timesteps)
                     if not grid_info and grid_info_cur:
                         grid_info = grid_info_cur
-                    
-                    print(f"\nSuccessfully extracted {len(arrays)} arrays from case {case}, timestep {timestep}")
+
+                    # Get the nested key to count arrays
+                    nested_key = f"{case}_{timestep}"
+                    num_arrays = len(arrays[nested_key]) if nested_key in arrays else 0
+                    print(f"\nSuccessfully extracted {num_arrays} arrays from case {case}, timestep {timestep}")
                 else:
                     print(f"No arrays extracted from timestep {timestep}")
             else:
@@ -82,3 +81,8 @@ if visu_data and visualisation_on:
     print(f"\nTotal arrays extracted: {len(visu_data)}")                
 else:
     print("No arrays were successfully extracted.")
+
+# Whole-domain visualisation
+# Slice visualisation
+# Iso-surface visualisation
+# Streamlines visualisation

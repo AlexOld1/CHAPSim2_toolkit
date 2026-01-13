@@ -13,38 +13,74 @@ def load_ts_avg_data(data_filepath):
     except OSError:
         print(f'Error loading data for {data_filepath}')
         return None
+    
+def get_quantities(thermo_on):
+    quantities = ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu22','uu33','pr']
+    if thermo_on:
+        quantities.append('T')
+    return quantities
 
 def visu_file_paths(folder_path, case, timestep):
     file_names = [
         f'{folder_path}{case}/2_visu/domain1_flow_{timestep}.xdmf',
-        f'{folder_path}{case}/2_visu/domain1_time_averaged_flow_{timestep}.xdmf',
-        f'{folder_path}{case}/2_visu/domain1_mhd_{timestep}.xdmf'
+        f'{folder_path}{case}/2_visu/domain1_t_avg_flow_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_tsp_avg_flow_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_mhd_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_thermo_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_t_avg_thermo_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_tsp_avg_thermo_{timestep}.xdmf'
     ]
     return file_names
 
-def read_xdmf_extract_numpy_arrays(file_names):
+def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None):
     """
     Reads XDMF files and extracts numpy arrays from VTK data.
-    
+
     Args:
-        folder_path (str): Path to the folder containing XDMF files
-        timestep (str): Timestep identifier
-    
+        file_names (list): List of XDMF file paths to read
+        case (str, optional): Case identifier for dictionary key
+        timestep (str, optional): Timestep identifier for dictionary key
+
     Returns:
         tuple: (visu_arrays_dic dict, grid_info dict)
+
+        If case and timestep are provided, returns nested dictionary:
+        {
+            "case_timestep": {
+                "variable_name": numpy_array,
+                ...
+            }
+        }
+
+        Otherwise returns flat dictionary:
+        {
+            "file_type_cell_variable_name": numpy_array,
+            ...
+        }
     """
 
-    visu_arrays_dic = {}
+    # Determine if we should use nested structure
+    use_nested = case is not None and timestep is not None
+
+    if use_nested:
+        # Create the outer key for this case/timestep combination
+        outer_key = f"{case}_{timestep}"
+        visu_arrays_dic = {outer_key: {}}
+        inner_dict = visu_arrays_dic[outer_key]
+    else:
+        visu_arrays_dic = {}
+        inner_dict = visu_arrays_dic
+
     grid_info = {}
-    
+
     for xdmf_file in file_names:
         try:
             print(f"Opening file: {xdmf_file}")
-            
+
             # Create an XdmfReader
             reader = vtk.vtkXdmfReader()
             reader.SetFileName(xdmf_file)
-            
+
             # Try to update the reader - catch XML parsing errors
             try:
                 reader.Update()
@@ -52,32 +88,34 @@ def read_xdmf_extract_numpy_arrays(file_names):
             except Exception as xml_error:
                 print(f"XML parsing error in {xdmf_file}: {str(xml_error)}")
                 continue
-            
+
             if output and output.GetNumberOfCells() > 0:
                 # Extract file type from filename for prefixing
-                if 'time_averaged' in xdmf_file:
-                    file_type = 'time_averaged'
+                if 't_avg' in xdmf_file:
+                    file_type = 'time_avg'
                 elif '_mhd_' in xdmf_file:
-                    file_type = 'mhd'  
+                    file_type = 'mhd'
+                elif '_thermo_' in xdmf_file:
+                    file_type = 'thermo'
                 else:
                     file_type = 'flow'
-                
+
                 # Extract grid information if not already done
                 if not grid_info:
                     grid_info = extract_grid_info(output)
                     print(f"Grid info: {grid_info}")
-                
+
                 # Get arrays from the dataset
                 dataset_arrays = get_vtk_arrays_with_numpy(output, file_type, grid_info)
-                visu_arrays_dic.update(dataset_arrays)
+                inner_dict.update(dataset_arrays)
                 print(f"Successfully extracted {len(dataset_arrays)} arrays from {file_type} file")
             else:
                 print(f"Warning: No valid output from {xdmf_file}, file missing or empty")
-                
+
         except Exception as e:
             print(f"Error processing {xdmf_file}: {str(e)}")
             continue
-    
+
     return visu_arrays_dic, grid_info
 
 def extract_grid_info(dataset):
@@ -165,18 +203,32 @@ def get_vtk_arrays_with_numpy(dataset, file_type="", grid_info=None):
 def reader_output_summary(arrays_dict):
     """
     Provides a summary analysis of the extracted arrays.
-    
+
     Args:
-        arrays_dict (dict): Dictionary of numpy arrays
+        arrays_dict (dict): Dictionary of numpy arrays (can be nested or flat)
     """
     print("\n" + "="*60)
     print("READER OUTPUT SUMMARY")
     print("="*60)
-    
-    for key, array in arrays_dict.items():
-        print(f"{key}:")
-        print(f"  Shape: {array.shape},  Min value: {np.min(array):.6e},  Max value: {np.max(array):.6e}   Mean value: {np.mean(array):.6e}")
-        print("-" * 40)
+
+    # Check if this is a nested dictionary (case_timestep structure)
+    first_key = next(iter(arrays_dict))
+    is_nested = isinstance(arrays_dict[first_key], dict)
+
+    if is_nested:
+        # Handle nested structure: {case_timestep: {variable: array}}
+        for case_timestep, variables in arrays_dict.items():
+            print(f"\n{case_timestep}:")
+            print("-" * 60)
+            for var_name, array in variables.items():
+                print(f"  {var_name}:")
+                print(f"    Shape: {array.shape},  Min: {np.min(array):.6e},  Max: {np.max(array):.6e},  Mean: {np.mean(array):.6e}")
+    else:
+        # Handle flat structure: {variable: array}
+        for key, array in arrays_dict.items():
+            print(f"{key}:")
+            print(f"  Shape: {array.shape},  Min value: {np.min(array):.6e},  Max value: {np.max(array):.6e}   Mean value: {np.mean(array):.6e}")
+            print("-" * 40)
 
 def visualise_domain_var(output, flow_var):
 
@@ -219,3 +271,36 @@ def clean_dat_file(input_file, output_file, expected_cols):
     print(f"\nSaved {len(clean_data)} clean lines to {output_file}")
     
     return np.array(clean_data)
+
+def get_col(case, cases, colours):
+    if len(cases) > 1:
+        colour = colours[cases.index(case)]
+    else:
+        colour = colours[0]
+    return colour
+
+def print_flow_info(ux_data, Re_ref, Re_bulk, case, timestep):
+
+    Re_ref = int(Re_ref)
+    du = ux_data[0, 2] - ux_data[1, 2]
+    dy = ux_data[0, 1] - ux_data[1, 1]
+    dudy = du/dy
+    tau_w = dudy/Re_ref # this should be ref Re not real bulk Re
+    u_tau = np.sqrt(abs(dudy/Re_ref))
+    Re_tau = u_tau * Re_ref
+    print(f'Case: {case}, Timestep: {timestep}')
+    print(f'Re_bulk = {Re_bulk}, u_tau = {u_tau}, tau_w = {tau_w}, Re_tau = {Re_tau}')
+    print('-'*120)
+    return
+
+def get_plane_data(domain_array, plane, index):
+    if plane == 'xy':
+        return domain_array[index, :, :]
+    elif plane == 'xz':
+        return domain_array[:, index, :]
+    elif plane == 'yz':
+        return domain_array[:, :, index]
+    else:
+        print(f"Error: Invalid plane '{plane}' specified. Use 'xy', 'xz', or 'yz'.")
+    return
+

@@ -1,0 +1,592 @@
+<?xml version="1.0" ?>
+<Xdmf Version="3.0">
+ <Domain>
+   <Grid Name="tsp_avg_flow" GridType="Uniform">
+     <Topology TopologyType="3DRectMesh" Dimensions=" 301 481 1001"/>
+     <Geometry GeometryType="VXVYVZ">
+        <DataItem ItemType="Uniform"
+                 Dimensions="1001"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Seek="4">
+          ../1_data/domain1_grid_x.bin
+        </DataItem>
+        <DataItem ItemType="Uniform"
+                 Dimensions="481"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Seek="4">
+          ../1_data/domain1_grid_y.bin
+        </DataItem>
+        <DataItem ItemType="Uniform"
+                 Dimensions="301"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Seek="4">
+          ../1_data/domain1_grid_z.bin
+        </DataItem>
+      </Geometry>
+      <Attribute Name="tsp_avg_pr" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_pr_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_u1" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_u1_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_u2" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_u2_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_u3" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_u3_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_pru1" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_pru1_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_pru2" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_pru2_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_pru3" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_pru3_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uu11" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uu11_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uu12" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uu12_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uu13" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uu13_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uu22" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uu22_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uu23" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uu23_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uu33" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uu33_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu111" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu111_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu112" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu112_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu113" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu113_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu122" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu122_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu123" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu123_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu133" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu133_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu222" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu222_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu223" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu223_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu233" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu233_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_uuu333" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_uuu333_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_dudu11" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_dudu11_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_dudu12" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_dudu12_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_dudu13" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_dudu13_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_dudu22" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_dudu22_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_dudu23" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_dudu23_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_dudu33" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_dudu33_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_f" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_f_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tf" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tf_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fu1" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fu1_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fu2" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fu2_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fu3" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fu3_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tu1" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tu1_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tu2" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tu2_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tu3" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tu3_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfu1" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfu1_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfu2" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfu2_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfu3" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfu3_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuu11" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuu11_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuu12" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuu12_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuu13" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuu13_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuu22" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuu22_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuu23" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuu23_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuu33" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuu33_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfuu11" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfuu11_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfuu12" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfuu12_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfuu13" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfuu13_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfuu22" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfuu22_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfuu23" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfuu23_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_tfuu33" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_tfuu33_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu111" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu111_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu112" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu112_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu113" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu113_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu122" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu122_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu123" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu123_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu133" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu133_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu222" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu222_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu223" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu223_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu233" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu233_400000.bin
+        </DataItem>
+      </Attribute>
+      <Attribute Name="tsp_avg_fuuu333" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="300 480 1000">
+          ../1_data/domain1_tsp_avg_fuuu333_400000.bin
+        </DataItem>
+      </Attribute>
+   </Grid>
+ </Domain>
+</Xdmf>
