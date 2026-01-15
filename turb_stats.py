@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # turb_stats.py
 # This script processes computes first order turbulence statistics from time and space averaged data for channel flow simulations.
 
