@@ -13,7 +13,7 @@ setup(
     description="A Python post-processing toolkit for CHAPSim2 DNS solver",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/CHAPSim2_python_toolkit",  # Update with your repo URL
+    url="https://github.com/AlexOld1/CHAPSim2_python_toolkit",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",

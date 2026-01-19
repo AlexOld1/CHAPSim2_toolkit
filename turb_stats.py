@@ -4,7 +4,7 @@
 
 # import libraries ------------------------------------------------------------------------------------------------------------------------------------
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass
 import numpy as np
 import matplotlib.pyplot as plt
@@ -36,12 +36,12 @@ class Config:
 
     # Output options
     ux_velocity_on: bool
+    temp_on: bool
+    tke_on: bool
     u_prime_sq_on: bool
     u_prime_v_prime_on: bool
     w_prime_sq_on: bool
     v_prime_sq_on: bool
-    tke_on: bool
-    temp_on: bool
 
     # Processing options
     norm_by_u_tau_sq: bool
@@ -78,12 +78,12 @@ class Config:
             Re=config_module.Re,
             ref_temp=config_module.ref_temp,
             ux_velocity_on=config_module.ux_velocity_on,
+            temp_on=config_module.temp_on,
+            tke_on=config_module.tke_on,
             u_prime_sq_on=config_module.u_prime_sq_on,
             u_prime_v_prime_on=config_module.u_prime_v_prime_on,
             w_prime_sq_on=config_module.w_prime_sq_on,
             v_prime_sq_on=config_module.v_prime_sq_on,
-            tke_on=config_module.tke_on,
-            temp_on=config_module.temp_on,
             norm_by_u_tau_sq=config_module.norm_by_u_tau_sq,
             norm_ux_by_u_tau=config_module.norm_ux_by_u_tau,
             norm_y_to_y_plus=config_module.norm_y_to_y_plus,
@@ -430,11 +430,11 @@ class ReferenceData:
             print(f"NK mhd reference is disabled or required data is missing: {e}")
 
 # =====================================================================================================================================================
-# TURBULENCE STATISTICS CLASSES
+# REYNOLDS STRESS CLASSES
 # =====================================================================================================================================================
 
-class TurbStatistic(ABC):
-    """Abstract base class for turbulence statistics"""
+class ReStresses(ABC):
+    """Abstract base class for Reynolds stress statistics"""
 
     def __init__(self, name: str, label: str, required_quantities: List[str]):
         self.name = name
@@ -468,16 +468,8 @@ class TurbStatistic(ABC):
         return values[:(len(values)//2)]
 
 
-class StreamwiseVelocity(TurbStatistic):
-    """Streamwise velocity profile (u1)"""
 
-    def __init__(self):
-        super().__init__('ux_velocity', 'Streamwise Velocity', ['u1'])
-
-    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        return op.read_profile(data_dict['u1'])
-
-class ReynoldsStressuu11(TurbStatistic):
+class ReynoldsStressuu11(ReStresses):
     """Reynolds stress u'u'"""
 
     def __init__(self):
@@ -486,7 +478,7 @@ class ReynoldsStressuu11(TurbStatistic):
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
         return op.compute_normal_stress(data_dict['u1'], data_dict['uu11'])
 
-class ReynoldsStressuu12(TurbStatistic):
+class ReynoldsStressuu12(ReStresses):
     """Reynolds stress u'v'"""
 
     def __init__(self):
@@ -495,7 +487,7 @@ class ReynoldsStressuu12(TurbStatistic):
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
         return op.compute_shear_stress(data_dict['u1'], data_dict['u2'], data_dict['uu12'])
 
-class ReynoldsStressuu22(TurbStatistic):
+class ReynoldsStressuu22(ReStresses):
     """Reynolds stress v'v'"""
 
     def __init__(self):
@@ -504,7 +496,7 @@ class ReynoldsStressuu22(TurbStatistic):
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
         return op.compute_normal_stress(data_dict['u2'], data_dict['uu22'])
 
-class ReynoldsStressuu33(TurbStatistic):
+class ReynoldsStressuu33(ReStresses):
     """Reynolds stress w'w'"""
 
     def __init__(self):
@@ -512,20 +504,57 @@ class ReynoldsStressuu33(TurbStatistic):
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
         return op.compute_normal_stress(data_dict['u3'], data_dict['uu33'])
-    
-class TurbulentKineticEnergy(TurbStatistic):
-    """Turbulent Kinetic Energy (TKE)"""
+
+# =====================================================================================================================================================
+# PROFILE CLASSES
+# =====================================================================================================================================================
+
+class Profiles(ABC):
+    """Abstract base class for velocity and temperature profiles"""
+
+    def __init__(self, name: str, label: str, required_quantities: List[str]):
+        self.name = name
+        self.label = label
+        self.required_quantities = required_quantities
+        self.raw_results: Dict[Tuple[str, str], np.ndarray] = {}
+        self.processed_results: Dict[Tuple[str, str], np.ndarray] = {}
+
+    @abstractmethod
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        """Compute the profile from required data"""
+        pass
+
+    def compute_for_case(self, case: str, timestep: str, data_loader: TurbulenceTextData) -> bool:
+        """Compute profile for a specific case and timestep"""
+        # Gather required data
+        data_dict = {}
+        for quantity in self.required_quantities:
+            if not data_loader.has(case, quantity, timestep):
+                print(f"Missing {quantity} data for {self.name} calculation: {case}, {timestep}")
+                return False
+            data_dict[quantity] = data_loader.get(case, quantity, timestep)
+
+        # Compute profile
+        result = self.compute(data_dict)
+        self.raw_results[(case, timestep)] = result
+        return True
+
+    def get_half_domain(self, values: np.ndarray) -> np.ndarray:
+        """Get first half of domain"""
+        return values[:(len(values)//2)]
+
+
+class StreamwiseVelocity(Profiles):
+    """Streamwise velocity profile (u1)"""
 
     def __init__(self):
-        super().__init__('TKE', 'k', ['u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33'])
+        super().__init__('ux_velocity', 'Streamwise Velocity', ['u1'])
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        u_prime_sq = op.compute_normal_stress(data_dict['u1'], data_dict['uu11'])
-        v_prime_sq = op.compute_normal_stress(data_dict['u2'], data_dict['uu22'])
-        w_prime_sq = op.compute_normal_stress(data_dict['u3'], data_dict['uu33'])
-        return op.compute_tke(u_prime_sq, v_prime_sq, w_prime_sq)
+        return op.read_profile(data_dict['u1'])
 
-class Temperature(TurbStatistic):
+
+class Temperature(Profiles):
     """Temperature profile"""
 
     def __init__(self, norm_temp_by_ref_temp: bool, ref_temp: float):
@@ -540,7 +569,59 @@ class Temperature(TurbStatistic):
             undim_temp = op.read_profile(data_dict['T'])
             return undim_temp * self.ref_temp
 
-#class TKE_Production(TurbStatistic):
+
+class TurbulentKineticEnergy(Profiles):
+    """Turbulent Kinetic Energy (TKE)"""
+
+    def __init__(self):
+        super().__init__('TKE', 'k', ['u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33'])
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        u_prime_sq = op.compute_normal_stress(data_dict['u1'], data_dict['uu11'])
+        v_prime_sq = op.compute_normal_stress(data_dict['u2'], data_dict['uu22'])
+        w_prime_sq = op.compute_normal_stress(data_dict['u3'], data_dict['uu33'])
+        return op.compute_tke(u_prime_sq, v_prime_sq, w_prime_sq)
+
+# =====================================================================================================================================================
+# TKE BUDGET CLASSES
+# =====================================================================================================================================================
+
+class TkeBudget(ABC):
+    """Abstract base class for TKE budget terms"""
+
+    def __init__(self, name: str, label: str, required_quantities: List[str]):
+        self.name = name
+        self.label = label
+        self.required_quantities = required_quantities
+        self.raw_results: Dict[Tuple[str, str], np.ndarray] = {}
+        self.processed_results: Dict[Tuple[str, str], np.ndarray] = {}
+
+    @abstractmethod
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        """Compute the TKE budget term from required data"""
+        pass
+
+    def compute_for_case(self, case: str, timestep: str, data_loader: TurbulenceTextData) -> bool:
+        """Compute TKE budget term for a specific case and timestep"""
+        # Gather required data
+        data_dict = {}
+        for quantity in self.required_quantities:
+            if not data_loader.has(case, quantity, timestep):
+                print(f"Missing {quantity} data for {self.name} calculation: {case}, {timestep}")
+                return False
+            data_dict[quantity] = data_loader.get(case, quantity, timestep)
+
+        # Compute budget term
+        result = self.compute(data_dict)
+        self.raw_results[(case, timestep)] = result
+        return True
+
+    def get_half_domain(self, values: np.ndarray) -> np.ndarray:
+        """Get first half of domain"""
+        return values[:(len(values)//2)]
+
+
+#class TKE_Production(TkeBudget):
     
 
 # =====================================================================================================================================================
@@ -553,7 +634,7 @@ class TurbulenceStatsPipeline:
     def __init__(self, config: Config, data_loader: TurbulenceTextData):
         self.config = config
         self.data_loader = data_loader
-        self.statistics: List[TurbStatistic] = []
+        self.statistics: List[Union[ReStresses, Profiles, TkeBudget]] = []
         self._register_statistics()
 
     def _register_statistics(self) -> None:
@@ -627,12 +708,28 @@ class TurbulenceStatsPipeline:
                 cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data, self.config.forcing)
                 ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep)
 
-    def get_statistic(self, name: str) -> Optional[TurbStatistic]:
+    def get_statistic(self, name: str) -> Optional[Union[ReStresses, Profiles, TkeBudget]]:
         """Get a specific statistic by name"""
         for stat in self.statistics:
             if stat.name == name:
                 return stat
         return None
+
+    def get_statistics_by_class(self) -> Dict[str, List[Union[ReStresses, Profiles, TkeBudget]]]:
+        """Group statistics by their class type"""
+        grouped: Dict[str, List[Union[ReStresses, Profiles, TkeBudget]]] = {
+            'ReStresses': [],
+            'Profiles': [],
+            'TkeBudget': []
+        }
+        for stat in self.statistics:
+            if isinstance(stat, ReStresses):
+                grouped['ReStresses'].append(stat)
+            elif isinstance(stat, Profiles):
+                grouped['Profiles'].append(stat)
+            elif isinstance(stat, TkeBudget):
+                grouped['TkeBudget'].append(stat)
+        return grouped
 
 # =====================================================================================================================================================
 # PLOTTING CLASS
@@ -646,14 +743,105 @@ class TurbulencePlotter:
         self.plot_config = plot_config
         self.data_loader = data_loader
 
-    def plot(self, statistics: List[TurbStatistic], reference_data: Optional[ReferenceData] = None):
+    def plot(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]], reference_data: Optional[ReferenceData] = None):
         """Main plotting method - delegates to single or multi plot"""
         if len(statistics) == 1 or not self.config.multi_plot:
             return self._plot_single_figure(statistics, reference_data)
         else:
             return self._plot_multi_figure(statistics, reference_data)
 
-    def _plot_single_figure(self, statistics: List[TurbStatistic],
+    def plot_by_class(self, grouped_statistics: Dict[str, List[Union[ReStresses, Profiles, TkeBudget]]],
+                      reference_data: Optional[ReferenceData] = None) -> Dict[str, Any]:
+        """Create separate figures for each class type (ReStresses, Profiles, TkeBudget)"""
+        figures = {}
+
+        class_titles = {
+            'ReStresses': 'Reynolds Stresses',
+            'Profiles': 'Profiles',
+            'TkeBudget': 'TKE Budget'
+        }
+
+        for class_name, stats_list in grouped_statistics.items():
+            if not stats_list:
+                continue
+
+            fig = self._plot_class_figure(stats_list, class_titles[class_name], reference_data)
+            figures[class_name] = fig
+
+        return figures
+
+    def _plot_class_figure(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]],
+                           title: str, reference_data: Optional[ReferenceData] = None):
+        """Create a figure with subplots for a single class type"""
+        n_stats = len(statistics)
+
+        if n_stats == 1:
+            # Single subplot
+            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+            fig.canvas.manager.set_window_title(title)
+            axs = np.array([[ax]])
+            nrows, ncols = 1, 1
+        else:
+            ncols = math.ceil(math.sqrt(n_stats))
+            nrows = math.ceil(n_stats / ncols)
+
+            fig, axs = plt.subplots(
+                nrows=nrows, ncols=ncols, figsize=(15, 10),
+                constrained_layout=True
+            )
+            fig.canvas.manager.set_window_title(title)
+
+            # Ensure axs is always 2D array
+            if nrows == 1 and ncols == 1:
+                axs = np.array([[axs]])
+            elif nrows == 1 or ncols == 1:
+                axs = axs.reshape(nrows, ncols)
+
+        # Plot each statistic
+        for i, stat in enumerate(statistics):
+            row = i // ncols
+            col = i % ncols
+            ax = axs[row, col]
+
+            for (case, timestep), values in stat.processed_results.items():
+                # Get y coordinates
+                y_plus = self._get_y_plus(case, timestep)
+                if y_plus is None:
+                    continue
+
+                # Get plotting aesthetics
+                color = self._get_color(case, stat.name)
+                label = f'{case.replace("_", " = ")}'
+
+                # Plot main data
+                self._plot_line(ax, y_plus, values, label, color)
+
+                # Plot reference data
+                if reference_data:
+                    self._plot_reference_data(ax, stat.name, case, reference_data)
+
+                # Add log scale reference lines
+                if stat.name == 'ux_velocity' and self.config.ux_velocity_log_ref_on and self.config.log_y_scale:
+                    self._plot_log_reference_lines(ax, y_plus)
+
+            # Set subplot properties
+            ax.set_title(f'{stat.label}')
+            ax.set_ylabel(f"Normalised {stat.name.replace('_', ' ')}")
+            ax.grid(True)
+            ax.legend(fontsize='small')
+
+            if row == nrows - 1:
+                ax.set_xlabel('$y^+$')
+
+        # Hide unused subplots
+        for i in range(n_stats, nrows * ncols):
+            row = i // ncols
+            col = i % ncols
+            axs[row, col].set_visible(False)
+
+        return fig
+
+    def _plot_single_figure(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]],
                            reference_data: Optional[ReferenceData] = None):
         """Create a single combined plot for all statistics"""
         plt.figure(figsize=(10, 6))
@@ -694,7 +882,7 @@ class TurbulencePlotter:
 
         return plt.gcf()
 
-    def _plot_multi_figure(self, statistics: List[TurbStatistic],
+    def _plot_multi_figure(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]],
                           reference_data: Optional[ReferenceData] = None):
         """Create separate subplots for each statistic"""
         n_stats = len(statistics)
@@ -844,12 +1032,14 @@ class TurbulencePlotter:
         else:
             return np.random.choice(list(mcolors.CSS4_COLORS.keys()))
 
-    def save_figure(self, fig) -> None:
+    def save_figure(self, fig, suffix: str = '') -> None:
         """Save figure to file"""
         if self.config.plot_name:
-            filename = self.config.plot_name
+            base_name = self.config.plot_name.rsplit('.', 1)[0]
+            ext = self.config.plot_name.rsplit('.', 1)[1] if '.' in self.config.plot_name else 'png'
+            filename = f'{base_name}{suffix}.{ext}' if suffix else self.config.plot_name
         else:
-            filename = 'turb_stats_plot.png'
+            filename = f'turb_stats_plot{suffix}.png' if suffix else 'turb_stats_plot.png'
         if self.config.save_to_path:
             fig.savefig(f'{self.config.folder_path}/{filename}',
                         dpi=300,
@@ -869,6 +1059,12 @@ class TurbulencePlotter:
                    transparent=True,
                    orientation='landscape')
         print(f'Figure saved to turb_stats_plots/{filename}')
+
+    def save_figures_by_class(self, figures: Dict[str, Any]) -> None:
+        """Save multiple figures, one for each class type"""
+        for class_name, fig in figures.items():
+            suffix = f'_{class_name.lower()}'
+            self.save_figure(fig, suffix)
 
     def display_figure(self) -> None:
         """Display figure"""
@@ -917,10 +1113,14 @@ def main():
         plot_config = PlotConfig()
         plotter = TurbulencePlotter(config, plot_config, data_loader)
 
-        fig = plotter.plot(pipeline.statistics, reference_data)
+        # Get statistics grouped by class type
+        grouped_stats = pipeline.get_statistics_by_class()
+
+        # Create separate figures for each class
+        figures = plotter.plot_by_class(grouped_stats, reference_data)
 
         if config.save_fig:
-            plotter.save_figure(fig)
+            plotter.save_figures_by_class(figures)
 
         if config.display_fig:
             plotter.display_figure()
