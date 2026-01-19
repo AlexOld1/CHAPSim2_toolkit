@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import xml.etree.ElementTree as ET
 import os
 import math
+from tqdm import tqdm
 
 
 def parse_xdmf_file(xdmf_path):
@@ -127,24 +128,30 @@ def load_xdmf_data(visu_folder, timestep):
     Returns dictionary of all variables and grid info.
     """
     file_patterns = [
-        f'domain1_tsp_avg_flow_{timestep}.xdmf',
-        f'domain1_time_averaged_flow_{timestep}.xdmf',
-        f'domain1_t_avg_flow_{timestep}.xdmf',
         f'domain1_flow_{timestep}.xdmf',
-        f'domain1_tsp_avg_thermo_{timestep}.xdmf',
-        f'domain1_time_averaged_thermo_{timestep}.xdmf',
-        f'domain1_t_avg_thermo_{timestep}.xdmf',
         f'domain1_thermo_{timestep}.xdmf',
         f'domain1_mhd_{timestep}.xdmf',
+        f'domain1_t_avg_flow_{timestep}.xdmf',
+        f'domain1_t_avg_thermo_{timestep}.xdmf',
+        f'domain1_t_avg_mhd_{timestep}.xdmf',
+        f'domain1_tsp_avg_flow_{timestep}.xdmf',
+        f'domain1_tsp_avg_thermo_{timestep}.xdmf',
+        f'domain1_tsp_avg_mhd_{timestep}.xdmf',
+        f'domain1_time_averaged_flow_{timestep}.xdmf', # old format
+        f'domain1_time_averaged_thermo_{timestep}.xdmf',
+        f'domain1_time_averaged_mhd_{timestep}.xdmf',
     ]
 
     all_data = {}
     grid_info = {}
 
-    for pattern in file_patterns:
-        filepath = os.path.join(visu_folder, pattern)
-        if os.path.isfile(filepath):
-            print(f"Loading: {pattern}")
+    # Find which files exist
+    existing_files = [(p, os.path.join(visu_folder, p)) for p in file_patterns
+                      if os.path.isfile(os.path.join(visu_folder, p))]
+
+    with tqdm(total=len(existing_files), desc="Loading XDMF files", unit="file") as pbar:
+        for pattern, filepath in existing_files:
+            pbar.set_postfix_str(pattern[:30])
             arrays, file_grid_info = parse_xdmf_file(filepath)
 
             # Store grid info from first file that has it
@@ -152,7 +159,7 @@ def load_xdmf_data(visu_folder, timestep):
                 grid_info = file_grid_info
 
             all_data.update(arrays)
-            print(f"  Found {len(arrays)} variables")
+            pbar.update(1)
 
     return all_data, grid_info
 
@@ -267,16 +274,19 @@ def normalise_results(results, y_coords, Re_bulk, ref_temp=None):
 
     normalised = {}
 
-    for name, values in results.items():
-        if name == 'ux_velocity':
-            normalised[name] = values / u_tau
-        elif name == 'temperature':
-            if ref_temp is not None:
-                normalised[name] = values * ref_temp
+    with tqdm(total=len(results), desc="Normalising", unit="var") as pbar:
+        for name, values in results.items():
+            pbar.set_postfix_str(name)
+            if name == 'ux_velocity':
+                normalised[name] = values / u_tau
+            elif name == 'temperature':
+                if ref_temp is not None:
+                    normalised[name] = values * ref_temp
+                else:
+                    normalised[name] = values
             else:
-                normalised[name] = values
-        else:
-            normalised[name] = values / u_tau_sq
+                normalised[name] = values / u_tau_sq
+            pbar.update(1)
 
     return normalised, u_tau, Re_tau
 
