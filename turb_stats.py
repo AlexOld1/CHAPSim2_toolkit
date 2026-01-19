@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import math
 import os
+from tqdm import tqdm
 
 # import modules --------------------------------------------------------------------------------------------------------------------------------------
 import operations as op
@@ -662,51 +663,55 @@ class TurbulenceStatsPipeline:
 
     def compute_all(self) -> None:
         """Compute all registered statistics for all cases and timesteps"""
-        for stat in self.statistics:
-            for case in self.config.cases:
-                for timestep in self.config.timesteps:
-                    stat.compute_for_case(case, timestep, self.data_loader)
+        total_tasks = len(self.statistics) * len(self.config.cases) * len(self.config.timesteps)
+        with tqdm(total=total_tasks, desc="Computing statistics", unit="stat") as pbar:
+            for stat in self.statistics:
+                for case in self.config.cases:
+                    for timestep in self.config.timesteps:
+                        stat.compute_for_case(case, timestep, self.data_loader)
+                        pbar.update(1)
 
     def process_all(self) -> None:
         """Apply normalization and averaging to all computed statistics"""
+        total_tasks = sum(len(stat.raw_results) for stat in self.statistics)
+        with tqdm(total=total_tasks, desc="Processing statistics", unit="stat") as pbar:
+            for stat in self.statistics:
+                for (case, timestep), values in stat.raw_results.items():
 
-        for stat in self.statistics:
-            for (case, timestep), values in stat.raw_results.items():
+                    # Get u1 data for normalization
+                    ux_data = self.data_loader.get(case, 'u1', timestep)
+                    if ux_data is None:
+                        print(f'Missing u1 data for normalization: {case}, {timestep}')
+                        pbar.update(1)
+                        continue
 
-                # Get u1 data for normalization
-                ux_data = self.data_loader.get(case, 'u1', timestep)
-                if ux_data is None:
-                    print(f'Missing u1 data for normalization: {case}, {timestep}')
-                    continue
+                    ref_Re = op.get_ref_Re(case, self.config.cases, self.config.Re)
 
-                ref_Re = op.get_ref_Re(case, self.config.cases, self.config.Re)
-
-                # Normalize
-                if self.config.norm_by_u_tau_sq and stat.name != 'temperature':
-                    normed = op.norm_turb_stat_wrt_u_tau_sq(ux_data, values, ref_Re)
-                else:
-                    normed = values
-
-                # Special normalization for u1 velocity
-                if self.config.norm_ux_by_u_tau and stat.name == 'ux_velocity':
-                    normed = op.norm_ux_velocity_wrt_u_tau(ux_data, ref_Re)
-                    print(f'u1 velocity normalised by u_tau for {case}, {timestep}')
-
-                # Symmetric averaging (skip for u'v')
-                if self.config.half_channel_plot: 
-                    if stat.name != 'u_prime_v_prime' and stat.name != 'temperature':
-                        normed_avg = op.symmetric_average(normed)
-                        stat.processed_results[(case, timestep)] = normed_avg
-                        # print(f'Symmetric averaged data for {case}, {timestep}')
+                    # Normalize
+                    if self.config.norm_by_u_tau_sq and stat.name != 'temperature':
+                        normed = op.norm_turb_stat_wrt_u_tau_sq(ux_data, values, ref_Re)
                     else:
-                        stat.processed_results[(case, timestep)] = normed[:(len(normed)//2)]
-                        #print(f'First half extracted for {case}, {timestep}')
-                else:
-                    stat.processed_results[(case, timestep)] = normed
+                        normed = values
 
-                # Print flow info
-                cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data, self.config.forcing)
-                ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep)
+                    # Special normalization for u1 velocity
+                    if self.config.norm_ux_by_u_tau and stat.name == 'ux_velocity':
+                        normed = op.norm_ux_velocity_wrt_u_tau(ux_data, ref_Re)
+                        print(f'u1 velocity normalised by u_tau for {case}, {timestep}')
+
+                    # Symmetric averaging (skip for u'v')
+                    if self.config.half_channel_plot:
+                        if stat.name != 'u_prime_v_prime' and stat.name != 'temperature':
+                            normed_avg = op.symmetric_average(normed)
+                            stat.processed_results[(case, timestep)] = normed_avg
+                        else:
+                            stat.processed_results[(case, timestep)] = normed[:(len(normed)//2)]
+                    else:
+                        stat.processed_results[(case, timestep)] = normed
+
+                    # Print flow info
+                    cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data, self.config.forcing)
+                    ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep)
+                    pbar.update(1)
 
     def get_statistic(self, name: str) -> Optional[Union[ReStresses, Profiles, TkeBudget]]:
         """Get a specific statistic by name"""

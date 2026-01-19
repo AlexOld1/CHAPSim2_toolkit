@@ -34,6 +34,7 @@ setup(
         "pandas>=1.2.0",
         "vtk>=9.0.0",
         "pyvista>=0.32.0",
+        "tqdm>=4.60.0",
     ],
     extras_require={
         "dev": [
