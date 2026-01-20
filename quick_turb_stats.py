@@ -100,8 +100,10 @@ def read_binary_data_item(data_item, xdmf_dir):
     if bin_path is None:
         return None
 
-    # Resolve relative path
-    bin_path = os.path.normpath(os.path.join(xdmf_dir, bin_path))
+    # Resolve relative path - look in ../1_data relative to xdmf_dir
+    data_dir = os.path.normpath(os.path.join(xdmf_dir, '..', '1_data'))
+    bin_filename = os.path.basename(bin_path)
+    bin_path = os.path.join(data_dir, bin_filename)
 
     if not os.path.isfile(bin_path):
         print(f"Binary file not found: {bin_path}")
