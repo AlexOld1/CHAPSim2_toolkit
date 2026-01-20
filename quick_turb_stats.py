@@ -11,10 +11,39 @@ import xml.etree.ElementTree as ET
 import os
 import math
 import mmap
+import glob
 from tqdm import tqdm
+
+# Enable tab completion for path input
+try:
+    import readline
+    def path_completer(text, state):
+        # Expand ~ and environment variables
+        expanded = os.path.expanduser(os.path.expandvars(text))
+        # Add wildcard for glob matching
+        if os.path.isdir(expanded):
+            pattern = os.path.join(expanded, '*')
+        else:
+            pattern = expanded + '*'
+        matches = glob.glob(pattern)
+        # Add trailing slash for directories
+        matches = [m + '/' if os.path.isdir(m) else m for m in matches]
+        try:
+            return matches[state]
+        except IndexError:
+            return None
+    readline.set_completer(path_completer)
+    readline.set_completer_delims(' \t\n;')
+    readline.parse_and_bind('tab: complete')
+except ImportError:
+    pass  # readline not available on all platforms
 
 # Set to True to use memory-mapped file reading (can help on HPC/Lustre filesystems)
 USE_MMAP_READ = False
+
+# Sampling stride for x and z directions (1 = no sampling, 2 = every 2nd point, etc.)
+# Higher values = faster loading but less averaging samples
+SAMPLE_STRIDE_XZ = 1
 
 
 def parse_xdmf_file(xdmf_path):
@@ -156,6 +185,10 @@ def read_binary_data_item(data_item, xdmf_dir):
                 data = data[:expected_size].reshape(dims)
             elif data.size < expected_size:
                 print(f"Warning: Data size mismatch for {bin_path} (got {data.size}, expected {expected_size})")
+
+        # Apply sampling in x and z directions if enabled (dims are typically z, y, x)
+        if SAMPLE_STRIDE_XZ > 1 and data is not None and len(data.shape) == 3:
+            data = data[::SAMPLE_STRIDE_XZ, :, ::SAMPLE_STRIDE_XZ]
 
         return data
 
@@ -471,8 +504,10 @@ def get_user_input():
     print("Quick Turbulence Statistics Plotter")
     print("=" * 60)
 
-    # Get visu folder path
-    visu_folder = input("\nPath to 2_visu folder: ").strip()
+    # Get visu folder path (supports tab completion, ~, and $ENV_VARS)
+    print("\nTip: Use Tab for path completion, ~ for home, $VAR for env variables")
+    visu_folder = input("Path to 2_visu folder: ").strip()
+    visu_folder = os.path.expanduser(os.path.expandvars(visu_folder))
     if not os.path.isdir(visu_folder):
         print(f"Error: Directory not found: {visu_folder}")
         return None
@@ -512,6 +547,15 @@ def get_user_input():
     re_input = input("Reynolds number (bulk) [5000]: ").strip()
     Re = float(re_input) if re_input else 5000.0
 
+    # Sampling option for faster loading
+    print("\nSampling reduces data in x/z directions (y kept full for profiles)")
+    print("  1 = full data, 2 = 1/4 data, 4 = 1/16 data, 8 = 1/64 data")
+    print("  Recommended: 4-8 for quick preview, 1-2 for final results")
+    sample_input = input("Sample stride [4]: ").strip()
+    sample_stride = int(sample_input) if sample_input else 4
+    if sample_stride < 1:
+        sample_stride = 1
+
     # Half channel plot
     half_input = input("Plot half channel? (y/n) [n]: ").strip().lower()
     half_channel = half_input == 'y'
@@ -531,6 +575,7 @@ def get_user_input():
         'forcing': forcing,
         'Re': Re,
         'ref_temp': ref_temp,
+        'sample_stride': sample_stride,
         'half_channel': half_channel,
         'save_fig': save_fig,
         'display_fig': display_fig,
@@ -539,13 +584,20 @@ def get_user_input():
 
 def main():
     """Main execution function."""
+    global SAMPLE_STRIDE_XZ
+
     # Get user input
     config = get_user_input()
     if config is None:
         return
 
+    # Set sampling stride from config
+    SAMPLE_STRIDE_XZ = config['sample_stride']
+
     print("\n" + "=" * 60)
     print("Loading data...")
+    if SAMPLE_STRIDE_XZ > 1:
+        print(f"(Sampling every {SAMPLE_STRIDE_XZ} points in x/z for faster loading)")
     print("=" * 60)
 
     # Load XDMF data
