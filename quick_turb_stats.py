@@ -45,15 +45,20 @@ USE_MMAP_READ = False
 # Higher values = faster loading but less averaging samples
 SAMPLE_STRIDE_XZ = 1
 
-# Variables required for Reynolds stress computation
-REQUIRED_VARS = {
+# Variables required for Reynolds stress computation (base names without prefixes)
+_BASE_REQUIRED_VARS = [
     # Velocities
     'u1', 'u2', 'u3', 'ux', 'uy', 'uz', 'qx_ccc', 'qy_ccc', 'qz_ccc',
     # Reynolds stresses
     'uu11', 'uu12', 'uu22', 'uu33', 'uu', 'uv', 'vv', 'ww', 'uxux', 'uxuy', 'uyuy', 'uzuz',
     # Temperature
-    'T', 'temperature', 'temp',
-}
+    'T', 'temperature', 'temp', 'TT',
+]
+
+# Build full set including prefixed versions (tsp_avg_, t_avg_)
+REQUIRED_VARS = set(_BASE_REQUIRED_VARS)
+for prefix in ['tsp_avg_', 't_avg_']:
+    REQUIRED_VARS.update(f'{prefix}{var}' for var in _BASE_REQUIRED_VARS)
 
 # Set to True to load all variables (slower), False to load only required ones (faster)
 LOAD_ALL_VARS = False
@@ -296,15 +301,19 @@ def extract_y_profile(data_3d, grid_info):
 def compute_reynolds_stresses(data, grid_info):
     """
     Compute Reynolds stresses from time-space averaged data.
-    Handles different naming conventions (u1/ux, uu11/uu, etc.)
+    Handles different naming conventions (u1/ux, uu11/uu, etc.) and prefixes (tsp_avg_, t_avg_)
     """
     results = {}
 
-    # Map variable names - try different conventions
-    def find_var(names):
-        for name in names:
-            if name in data:
-                return extract_y_profile(data[name], grid_info)
+    # Map variable names - try different conventions and prefixes
+    def find_var(base_names):
+        # Try with prefixes first (tsp_avg_, t_avg_), then without
+        prefixes = ['tsp_avg_', 't_avg_', '']
+        for prefix in prefixes:
+            for name in base_names:
+                full_name = f'{prefix}{name}'
+                if full_name in data:
+                    return extract_y_profile(data[full_name], grid_info)
         return None
 
     # Velocity components
@@ -340,7 +349,7 @@ def compute_reynolds_stresses(data, grid_info):
         results['TKE'] = 0.5 * (results['u_prime_sq'] + results['v_prime_sq'] + results['w_prime_sq'])
 
     # Temperature if available
-    T = find_var(['T', 'temperature', 'temp'])
+    T = find_var(['T', 'temperature', 'temp', 'TT'])
     if T is not None:
         results['temperature'] = T
 
