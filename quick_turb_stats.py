@@ -549,9 +549,9 @@ def get_user_input():
     print("=" * 60)
 
     # Get visu folder path (supports tab completion, ~, and $ENV_VARS)
-    print("\nTip: Use Tab for path completion, ~ for home, $VAR for env variables")
-    visu_folder = input("Path to 2_visu folder: ").strip()
-    visu_folder = os.path.expanduser(os.path.expandvars(visu_folder))
+    print("\nTip: Use Tab for path completion")
+    case_folder = input("Path to case folder: ").strip()
+    visu_folder = os.path.expanduser(os.path.expandvars(os.path.join(case_folder, '2_visu/')))
     if not os.path.isdir(visu_folder):
         print(f"Error: Directory not found: {visu_folder}")
         return None
@@ -608,7 +608,7 @@ def get_user_input():
     save_input = input("Save figures? (y/n) [y]: ").strip().lower()
     save_fig = save_input != 'n'
 
-    display_input = input("Display figures? (y/n) [y]: ").strip().lower()
+    display_input = input("Display figures? (y/n) [n]: ").strip().lower()
     display_fig = display_input != 'n'
 
     return {
@@ -708,7 +708,7 @@ def main():
     print("Generating plots...")
     print("=" * 60)
 
-    save_path = config['visu_folder'] if config['save_fig'] else None
+    save_path = config['case_folder'] if config['save_fig'] else None
     plot_results(results, y, config['half_channel'], save_path)
 
     if config['display_fig']:
