@@ -182,7 +182,7 @@ if plt_bulk:
 
             fig.suptitle('Bulk Quantities', fontsize=14)
             fig.tight_layout()
-            fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.log','_plot')}.png', dpi=300)
+            fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".log","_plot")}.png', dpi=300)
             print(f'Saved bulk history plot for {file}')
         
         if file == 'domain1_monitor_change_history.log':
@@ -215,7 +215,7 @@ if plt_bulk:
 
             fig.suptitle('Change History', fontsize=14)
             fig.tight_layout()
-            fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.log','_plot')}.png', dpi=300)
+            fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".log","_plot")}.png', dpi=300)
             print(f'Saved change history plot for {file}')
 
 print('='*100)
