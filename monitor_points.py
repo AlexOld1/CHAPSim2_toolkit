@@ -126,7 +126,7 @@ if plt_pts:
 
         fig.suptitle(f'{file} - Monitor Point Data', fontsize=14)
         fig.tight_layout()
-        fig.savefig(f'{path}{file.replace('domain1_monitor_','').replace('.dat','_plot')}.png', dpi=300, bbox_inches='tight')
+        fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".dat","_plot")}.png', dpi=300, bbox_inches='tight')
         plt.close(fig)
 
         print(f'Saved subplot figure for {file}')
