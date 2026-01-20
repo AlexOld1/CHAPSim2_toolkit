@@ -10,7 +10,11 @@ import matplotlib.pyplot as plt
 import xml.etree.ElementTree as ET
 import os
 import math
+import mmap
 from tqdm import tqdm
+
+# Set to True to use memory-mapped file reading (can help on HPC/Lustre filesystems)
+USE_MMAP_READ = False
 
 
 def parse_xdmf_file(xdmf_path):
@@ -104,16 +108,35 @@ def read_binary_data_item(data_item, xdmf_dir):
         return None
 
     try:
-        with open(bin_path, 'rb') as f:
-            f.seek(seek)
-            data = np.fromfile(f, dtype=dtype)
+        # Calculate expected number of elements to read
+        # This avoids np.fromfile reading until EOF, which can hang on Lustre/HPC filesystems
+        itemsize = np.dtype(dtype).itemsize
+        if dims:
+            count = int(np.prod(dims))
+        else:
+            # Fallback: calculate from file size
+            file_size = os.path.getsize(bin_path)
+            count = (file_size - seek) // itemsize
+
+        if USE_MMAP_READ:
+            # Memory-mapped reading - can be more reliable on some HPC filesystems
+            with open(bin_path, 'rb') as f:
+                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+                byte_count = count * itemsize
+                data = np.frombuffer(mm[seek:seek + byte_count], dtype=dtype).copy()
+                mm.close()
+        else:
+            # Standard reading with explicit count (fixes Lustre EOF hanging)
+            with open(bin_path, 'rb') as f:
+                f.seek(seek)
+                data = np.fromfile(f, dtype=dtype, count=count)
 
         if dims:
-            expected_size = np.prod(dims)
+            expected_size = int(np.prod(dims))
             if data.size >= expected_size:
                 data = data[:expected_size].reshape(dims)
-            else:
-                print(f"Warning: Data size mismatch for {bin_path}")
+            elif data.size < expected_size:
+                print(f"Warning: Data size mismatch for {bin_path} (got {data.size}, expected {expected_size})")
 
         return data
 
