@@ -26,10 +26,16 @@ def parse_xdmf_file(xdmf_path):
         return {}, {}
 
     try:
-        tree = ET.parse(xdmf_path)
-        root = tree.getroot()
+        # Read file content first, then parse from string
+        # This avoids ET.parse() holding file locks on Lustre filesystems
+        with open(xdmf_path, 'r') as f:
+            xml_content = f.read()
+        root = ET.fromstring(xml_content)
     except ET.ParseError as e:
         print(f"Error parsing {xdmf_path}: {e}")
+        return {}, {}
+    except IOError as e:
+        print(f"Error reading {xdmf_path}: {e}")
         return {}, {}
 
     arrays = {}
@@ -46,6 +52,9 @@ def parse_xdmf_file(xdmf_path):
                 grid_info['node_dimensions'] = dims
                 grid_info['cell_dimensions'] = tuple(d - 1 for d in dims)
 
+        # Collect all data items to read for progress bar
+        read_tasks = []
+
         # Get geometry (grid coordinates)
         for geom in grid.iter('Geometry'):
             geom_type = geom.get('GeometryType')
@@ -53,19 +62,27 @@ def parse_xdmf_file(xdmf_path):
                 data_items = list(geom.iter('DataItem'))
                 coord_names = ['x', 'y', 'z']
                 for i, data_item in enumerate(data_items[:3]):
-                    coord_data = read_binary_data_item(data_item, xdmf_dir)
-                    if coord_data is not None:
-                        grid_info[f'grid_{coord_names[i]}'] = coord_data
+                    read_tasks.append(('grid', f'grid_{coord_names[i]}', data_item))
 
         # Get attributes (flow variables)
         for attribute in grid.iter('Attribute'):
             name = attribute.get('Name')
             data_item = attribute.find('DataItem')
-
             if data_item is not None:
+                read_tasks.append(('array', name, data_item))
+
+        # Read all data items with progress bar
+        xdmf_name = os.path.basename(xdmf_path)
+        with tqdm(total=len(read_tasks), desc=f"  {xdmf_name}", unit="var", leave=False) as pbar:
+            for task_type, name, data_item in read_tasks:
+                pbar.set_postfix_str(name[:20])
                 data = read_binary_data_item(data_item, xdmf_dir)
                 if data is not None:
-                    arrays[name] = data
+                    if task_type == 'grid':
+                        grid_info[name] = data
+                    else:
+                        arrays[name] = data
+                pbar.update(1)
 
     return arrays, grid_info
 
