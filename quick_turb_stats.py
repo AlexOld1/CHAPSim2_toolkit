@@ -45,6 +45,19 @@ USE_MMAP_READ = False
 # Higher values = faster loading but less averaging samples
 SAMPLE_STRIDE_XZ = 1
 
+# Variables required for Reynolds stress computation
+REQUIRED_VARS = {
+    # Velocities
+    'u1', 'u2', 'u3', 'ux', 'uy', 'uz', 'qx_ccc', 'qy_ccc', 'qz_ccc',
+    # Reynolds stresses
+    'uu11', 'uu12', 'uu22', 'uu33', 'uu', 'uv', 'vv', 'ww', 'uxux', 'uxuy', 'uyuy', 'uzuz',
+    # Temperature
+    'T', 'temperature', 'temp',
+}
+
+# Set to True to load all variables (slower), False to load only required ones (faster)
+LOAD_ALL_VARS = False
+
 
 def parse_xdmf_file(xdmf_path):
     """
@@ -93,15 +106,21 @@ def parse_xdmf_file(xdmf_path):
                 for i, data_item in enumerate(data_items[:3]):
                     read_tasks.append(('grid', f'grid_{coord_names[i]}', data_item))
 
-        # Get attributes (flow variables)
+        # Get attributes (flow variables) - filter to only required ones if enabled
+        skipped_vars = []
         for attribute in grid.iter('Attribute'):
             name = attribute.get('Name')
             data_item = attribute.find('DataItem')
             if data_item is not None:
-                read_tasks.append(('array', name, data_item))
+                if LOAD_ALL_VARS or name in REQUIRED_VARS:
+                    read_tasks.append(('array', name, data_item))
+                else:
+                    skipped_vars.append(name)
 
         # Read all data items with progress bar
         xdmf_name = os.path.basename(xdmf_path)
+        if skipped_vars:
+            print(f"  Skipping {len(skipped_vars)} unneeded variables: {', '.join(skipped_vars[:3])}{'...' if len(skipped_vars) > 3 else ''}")
         with tqdm(total=len(read_tasks), desc=f"  {xdmf_name}", unit="var", leave=False) as pbar:
             for task_type, name, data_item in read_tasks:
                 pbar.set_postfix_str(name[:20])
@@ -200,22 +219,42 @@ def read_binary_data_item(data_item, xdmf_dir):
 def load_xdmf_data(visu_folder, timestep):
     """
     Load all available XDMF data from the 2_visu folder.
-    Returns dictionary of all variables and grid info.
+    Prioritises tsp_avg (time-space averaged) files, falls back to t_avg (time averaged) if not found.
+    Returns dictionary of all variables, grid info, and whether data is already space-averaged.
     """
-    file_patterns = [
-        f'domain1_flow_{timestep}.xdmf',
-        f'domain1_thermo_{timestep}.xdmf',
-        f'domain1_mhd_{timestep}.xdmf',
-        f'domain1_t_avg_flow_{timestep}.xdmf',
-        f'domain1_t_avg_thermo_{timestep}.xdmf',
-        f'domain1_t_avg_mhd_{timestep}.xdmf',
+    # Preferred: time-space averaged files (already spatially averaged, 1D in y)
+    tsp_avg_patterns = [
         f'domain1_tsp_avg_flow_{timestep}.xdmf',
         f'domain1_tsp_avg_thermo_{timestep}.xdmf',
         f'domain1_tsp_avg_mhd_{timestep}.xdmf',
-        f'domain1_time_averaged_flow_{timestep}.xdmf', # old format
-        f'domain1_time_averaged_thermo_{timestep}.xdmf',
-        f'domain1_time_averaged_mhd_{timestep}.xdmf',
     ]
+
+    # Fallback: time averaged files (3D, need spatial averaging)
+    t_avg_patterns = [
+        f'domain1_t_avg_flow_{timestep}.xdmf',
+        f'domain1_t_avg_thermo_{timestep}.xdmf',
+        f'domain1_t_avg_mhd_{timestep}.xdmf',
+    ]
+
+    # Check which tsp_avg files exist
+    tsp_avg_files = [(p, os.path.join(visu_folder, p)) for p in tsp_avg_patterns
+                     if os.path.isfile(os.path.join(visu_folder, p))]
+
+    is_space_averaged = False
+    if tsp_avg_files:
+        print("Found time-space averaged (tsp_avg) files - data is 1D, no spatial averaging needed")
+        file_patterns = tsp_avg_patterns
+        is_space_averaged = True
+    else:
+        # Fall back to t_avg files
+        t_avg_files = [(p, os.path.join(visu_folder, p)) for p in t_avg_patterns
+                       if os.path.isfile(os.path.join(visu_folder, p))]
+        if t_avg_files:
+            print("No tsp_avg files found, using time averaged (t_avg) files - will spatially average")
+            file_patterns = t_avg_patterns
+        else:
+            print("Warning: No averaged data files found (tsp_avg or t_avg)")
+            file_patterns = []
 
     all_data = {}
     grid_info = {}
@@ -236,7 +275,7 @@ def load_xdmf_data(visu_folder, timestep):
             all_data.update(arrays)
             pbar.update(1)
 
-    return all_data, grid_info
+    return all_data, grid_info, is_space_averaged
 
 
 def extract_y_profile(data_3d, grid_info):
@@ -266,10 +305,6 @@ def compute_reynolds_stresses(data, grid_info):
         for name in names:
             if name in data:
                 return extract_y_profile(data[name], grid_info)
-            # Also check with time_averaged_ prefix
-            prefixed = f'time_averaged_{name}'
-            if prefixed in data:
-                return extract_y_profile(data[prefixed], grid_info)
         return None
 
     # Velocity components
@@ -591,17 +626,27 @@ def main():
     if config is None:
         return
 
-    # Set sampling stride from config
-    SAMPLE_STRIDE_XZ = config['sample_stride']
-
     print("\n" + "=" * 60)
     print("Loading data...")
-    if SAMPLE_STRIDE_XZ > 1:
-        print(f"(Sampling every {SAMPLE_STRIDE_XZ} points in x/z for faster loading)")
+    if not LOAD_ALL_VARS:
+        print("(Loading only required variables for Reynolds stress computation)")
     print("=" * 60)
 
+    # Check if tsp_avg files exist to determine if we need sampling
+    visu_folder = config['visu_folder']
+    timestep = config['timestep']
+    tsp_avg_exists = os.path.isfile(os.path.join(visu_folder, f'domain1_tsp_avg_flow_{timestep}.xdmf'))
+
+    # Only apply sampling for t_avg (3D) data, not tsp_avg (already 1D)
+    if tsp_avg_exists:
+        SAMPLE_STRIDE_XZ = 1  # tsp_avg is already 1D, no sampling needed
+    else:
+        SAMPLE_STRIDE_XZ = config['sample_stride']
+        if SAMPLE_STRIDE_XZ > 1:
+            print(f"(Sampling every {SAMPLE_STRIDE_XZ} points in x/z for spatial averaging)")
+
     # Load XDMF data
-    data, grid_info = load_xdmf_data(config['visu_folder'], config['timestep'])
+    data, grid_info, is_space_averaged = load_xdmf_data(visu_folder, timestep)
 
     if not data:
         print("Error: No data loaded. Check file paths.")
