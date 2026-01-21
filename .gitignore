@@ -26,3 +26,7 @@ ENV/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Code Testing
+Tests/
+turb_stats_plots/

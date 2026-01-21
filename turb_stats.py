@@ -44,6 +44,15 @@ class Config:
     w_prime_sq_on: bool
     v_prime_sq_on: bool
 
+    # TKE Budget options
+    tke_budget_on: bool
+    tke_production_on: bool
+    tke_dissipation_on: bool
+    tke_convection_on: bool
+    tke_viscous_diffusion_on: bool
+    tke_pressure_transport_on: bool
+    tke_turbulent_diffusion_on: bool
+
     # Processing options
     norm_by_u_tau_sq: bool
     norm_ux_by_u_tau: bool
@@ -69,37 +78,44 @@ class Config:
     def from_module(cls, config_module):
         """Create Config from imported config module"""
         return cls(
-            folder_path=config_module.folder_path,
-            input_format=config_module.input_format,
-            cases=config_module.cases,
-            timesteps=config_module.timesteps,
-            thermo_on=config_module.thermo_on,
-            mhd_on=config_module.mhd_on,
-            forcing=config_module.forcing,
-            Re=config_module.Re,
-            ref_temp=config_module.ref_temp,
-            ux_velocity_on=config_module.ux_velocity_on,
-            temp_on=config_module.temp_on,
-            tke_on=config_module.tke_on,
-            u_prime_sq_on=config_module.u_prime_sq_on,
-            u_prime_v_prime_on=config_module.u_prime_v_prime_on,
-            w_prime_sq_on=config_module.w_prime_sq_on,
-            v_prime_sq_on=config_module.v_prime_sq_on,
-            norm_by_u_tau_sq=config_module.norm_by_u_tau_sq,
-            norm_ux_by_u_tau=config_module.norm_ux_by_u_tau,
-            norm_y_to_y_plus=config_module.norm_y_to_y_plus,
-            norm_temp_by_ref_temp=config_module.norm_temp_by_ref_temp,
-            half_channel_plot=config_module.half_channel_plot,
-            linear_y_scale=config_module.linear_y_scale,
-            log_y_scale=config_module.log_y_scale,
-            multi_plot=config_module.multi_plot,
-            display_fig=config_module.display_fig,
-            save_fig=config_module.save_fig,
-            save_to_path=config_module.save_to_path,
-            plot_name=config_module.plot_name,
-            ux_velocity_log_ref_on=config_module.ux_velocity_log_ref_on,
-            mhd_NK_ref_on=config_module.mhd_NK_ref_on,
-            mkm180_ch_ref_on=config_module.mkm180_ch_ref_on,
+            folder_path=getattr(config_module, 'folder_path', ''),
+            input_format=getattr(config_module, 'input_format', 'dat'),
+            cases=getattr(config_module, 'cases', []),
+            timesteps=getattr(config_module, 'timesteps', []),
+            thermo_on=getattr(config_module, 'thermo_on', False),
+            mhd_on=getattr(config_module, 'mhd_on', False),
+            forcing=getattr(config_module, 'forcing', 'CMF'),
+            Re=getattr(config_module, 'Re', [1.0]),
+            ref_temp=getattr(config_module, 'ref_temp', [300.0]),
+            ux_velocity_on=getattr(config_module, 'ux_velocity_on', False),
+            temp_on=getattr(config_module, 'temp_on', False),
+            tke_on=getattr(config_module, 'tke_on', False),
+            u_prime_sq_on=getattr(config_module, 'u_prime_sq_on', False),
+            u_prime_v_prime_on=getattr(config_module, 'u_prime_v_prime_on', False),
+            w_prime_sq_on=getattr(config_module, 'w_prime_sq_on', False),
+            v_prime_sq_on=getattr(config_module, 'v_prime_sq_on', False),
+            tke_budget_on=getattr(config_module, 'tke_budget_on', False),
+            tke_production_on=getattr(config_module, 'tke_production_on', False),
+            tke_dissipation_on=getattr(config_module, 'tke_dissipation_on', False),
+            tke_convection_on=getattr(config_module, 'tke_convection_on', False),
+            tke_viscous_diffusion_on=getattr(config_module, 'tke_viscous_diffusion_on', False),
+            tke_pressure_transport_on=getattr(config_module, 'tke_pressure_transport_on', False),
+            tke_turbulent_diffusion_on=getattr(config_module, 'tke_turbulent_diffusion_on', False),
+            norm_by_u_tau_sq=getattr(config_module, 'norm_by_u_tau_sq', False),
+            norm_ux_by_u_tau=getattr(config_module, 'norm_ux_by_u_tau', False),
+            norm_y_to_y_plus=getattr(config_module, 'norm_y_to_y_plus', False),
+            norm_temp_by_ref_temp=getattr(config_module, 'norm_temp_by_ref_temp', False),
+            half_channel_plot=getattr(config_module, 'half_channel_plot', False),
+            linear_y_scale=getattr(config_module, 'linear_y_scale', True),
+            log_y_scale=getattr(config_module, 'log_y_scale', False),
+            multi_plot=getattr(config_module, 'multi_plot', True),
+            display_fig=getattr(config_module, 'display_fig', False),
+            save_fig=getattr(config_module, 'save_fig', True),
+            save_to_path=getattr(config_module, 'save_to_path', False),
+            plot_name=getattr(config_module, 'plot_name', ''),
+            ux_velocity_log_ref_on=getattr(config_module, 'ux_velocity_log_ref_on', False),
+            mhd_NK_ref_on=getattr(config_module, 'mhd_NK_ref_on', False),
+            mkm180_ch_ref_on=getattr(config_module, 'mkm180_ch_ref_on', False),
         )
 
 @dataclass
@@ -166,6 +182,15 @@ class PlotConfig:
                 "u_prime_v_prime": "<u'v'>",
                 "v_prime_sq": "<v'v'>",
                 "w_prime_sq": "<w'w'>",
+                # TKE Budget terms
+                "production": "Production",
+                "dissipation": "Dissipation",
+                "convection": "Convection",
+                "viscous_diffusion": "Viscous Diffusion",
+                "pressure_transport": "Pressure Transport",
+                "turbulent_diffusion": "Turbulent Diffusion",
+                "buoyancy": "Buoyancy",
+                "mhd": "MHD (Lorentz)",
             }
 
     @property
@@ -622,8 +647,205 @@ class TkeBudget(ABC):
         return values[:(len(values)//2)]
 
 
-#class TKE_Production(TkeBudget):
-    
+class TKE_Production(TkeBudget):
+    """
+    TKE Production term: P = -⟨u'ᵢu'ⱼ⟩ ∂Uᵢ/∂xⱼ
+
+    For channel flow (homogeneous in x and z), simplifies to:
+    P = -⟨u'v'⟩ ∂U/∂y
+    """
+
+    def __init__(self):
+        super().__init__(
+            'production',
+            'Production',
+            ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu13', 'uu22', 'uu23', 'uu33',
+             'du1dx', 'du1dy', 'du1dz', 'du2dx', 'du2dy', 'du2dz', 'du3dx', 'du3dy', 'du3dz']
+        )
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        # Compute Reynolds stress fluctuations
+        u1p_u1p = data_dict['uu11'][:, 2] - np.square(data_dict['u1'][:, 2])
+        u1p_u2p = data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2]
+        u1p_u3p = data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2]
+        u2p_u2p = data_dict['uu22'][:, 2] - np.square(data_dict['u2'][:, 2])
+        u2p_u3p = data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2]
+        u3p_u3p = data_dict['uu33'][:, 2] - np.square(data_dict['u3'][:, 2])
+
+        # Production for each velocity component
+        prod_u1 = -1 * (u1p_u1p * data_dict['du1dx'][:, 2] +
+                        u1p_u2p * data_dict['du1dy'][:, 2] +
+                        u1p_u3p * data_dict['du1dz'][:, 2])
+
+        prod_u2 = -1 * (u1p_u2p * data_dict['du2dx'][:, 2] +
+                        u2p_u2p * data_dict['du2dy'][:, 2] +
+                        u2p_u3p * data_dict['du2dz'][:, 2])
+
+        prod_u3 = -1 * (u1p_u3p * data_dict['du3dx'][:, 2] +
+                        u2p_u3p * data_dict['du3dy'][:, 2] +
+                        u3p_u3p * data_dict['du3dz'][:, 2])
+
+        return prod_u1 + prod_u2 + prod_u3
+
+
+class TKE_Dissipation(TkeBudget):
+    """
+    TKE Dissipation term: ε = -(1/Re) ⟨∂u'ᵢ/∂xⱼ ∂u'ᵢ/∂xⱼ⟩
+
+    Represents the conversion of TKE to internal energy through viscous action.
+    """
+
+    def __init__(self, Re: float):
+        super().__init__(
+            'dissipation',
+            'Dissipation',
+            ['dudu11', 'dudu12', 'dudu13', 'dudu22', 'dudu23', 'dudu33']
+        )
+        self.Re = Re
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        # Sum of all velocity gradient correlations
+        total_dissipation = (data_dict['dudu11'][:, 2] + data_dict['dudu22'][:, 2] + data_dict['dudu33'][:, 2])
+
+        return -(1.0 / self.Re) * total_dissipation
+
+
+class TKE_Convection(TkeBudget):
+    """
+    TKE Convection (Advection) term: C = -Uⱼ ∂k/∂xⱼ
+
+    Represents the transport of TKE by the mean flow.
+    For channel flow (homogeneous in x and z), simplifies to: C = -V ∂k/∂y
+    """
+
+    def __init__(self):
+        super().__init__(
+            'convection',
+            'Convection',
+            ['u1', 'u2', 'u3', 'dkdx', 'dkdy', 'dkdz']
+        )
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        convection = -(data_dict['u1'][:, 2] * data_dict['dkdx'][:, 2] +
+                       data_dict['u2'][:, 2] * data_dict['dkdy'][:, 2] +
+                       data_dict['u3'][:, 2] * data_dict['dkdz'][:, 2])
+
+        return convection
+
+
+class TKE_ViscousDiffusion(TkeBudget):
+    """
+    TKE Viscous Diffusion term: VD = (1/Re) ∂²k/∂xⱼ²
+
+    Represents the diffusion of TKE by molecular viscosity.
+    """
+
+    def __init__(self, Re: float):
+        super().__init__(
+            'viscous_diffusion',
+            'Viscous Diffusion',
+            ['d2kdx2', 'd2kdy2', 'd2kdz2']
+        )
+        self.Re = Re
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        visc_diff = (1.0 / self.Re) * (data_dict['d2kdx2'][:, 2] +
+                                        data_dict['d2kdy2'][:, 2] +
+                                        data_dict['d2kdz2'][:, 2])
+
+        return visc_diff
+
+
+class TKE_PressureTransport(TkeBudget):
+    """
+    TKE Pressure Transport term: PT = -∂⟨p'u'ⱼ⟩/∂xⱼ
+
+    Represents the redistribution of TKE by pressure fluctuations.
+    Also called pressure diffusion or velocity-pressure gradient correlation.
+    """
+
+    def __init__(self):
+        super().__init__(
+            'pressure_transport',
+            'Pressure Transport',
+            ['pr', 'u1', 'u2', 'u3', 'pru1', 'pru2', 'pru3',
+             'd_pu1p_dx', 'd_pu2p_dy', 'd_pu3p_dz']
+        )
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        # Pressure transport from gradients of pressure-velocity fluctuation correlations
+        press_transport = -(data_dict['d_pu1p_dx'][:, 2] +
+                            data_dict['d_pu2p_dy'][:, 2] +
+                            data_dict['d_pu3p_dz'][:, 2])
+
+        return press_transport
+
+
+class TKE_TurbulentDiffusion(TkeBudget):
+    """
+    TKE Turbulent Diffusion term: TD = -(1/2) ∂⟨u'ᵢu'ᵢu'ⱼ⟩/∂xⱼ
+
+    Represents the transport of TKE by turbulent velocity fluctuations.
+    Also called turbulent transport.
+    """
+
+    def __init__(self):
+        super().__init__(
+            'turbulent_diffusion',
+            'Turbulent Diffusion',
+            ['d_uiuiu1_dx', 'd_uiuiu2_dy', 'd_uiuiu3_dz']
+        )
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        turb_diff = -0.5 * (data_dict['d_uiuiu1_dx'][:, 2] +
+                            data_dict['d_uiuiu2_dy'][:, 2] +
+                            data_dict['d_uiuiu3_dz'][:, 2])
+
+        return turb_diff
+
+
+# Placeholder classes for future implementation
+class TKE_Buoyancy(TkeBudget):
+    """
+    TKE Buoyancy term: B = -β gᵢ ⟨u'ᵢT'⟩
+
+    Represents the production/destruction of TKE due to buoyancy effects.
+    For vertical direction (gravity in y): B = -β g ⟨v'T'⟩
+
+    TODO: Implement when thermal data is available.
+    """
+
+    def __init__(self):
+        super().__init__(
+            'buoyancy',
+            'Buoyancy',
+            ['u2', 'T', 'u2T']  # Placeholder - actual requirements TBD
+        )
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        raise NotImplementedError("Buoyancy term not yet implemented")
+
+
+class TKE_MHD(TkeBudget):
+    """
+    TKE MHD (Lorentz force) term: M = ⟨u'ᵢj'ᵢ⟩ × B / ρ
+
+    Represents the interaction between velocity fluctuations and
+    induced current fluctuations in an MHD flow.
+
+    TODO: Implement when MHD data is available.
+    """
+
+    def __init__(self):
+        super().__init__(
+            'mhd',
+            'MHD (Lorentz)',
+            ['u1', 'u2', 'u3', 'j1', 'j2', 'j3']  # Placeholder - actual requirements TBD
+        )
+
+    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        raise NotImplementedError("MHD term not yet implemented")
+
 
 # =====================================================================================================================================================
 # PIPELINE CLASS
@@ -660,6 +882,28 @@ class TurbulenceStatsPipeline:
 
         if self.config.temp_on:
             self.statistics.append(Temperature(self.config.norm_temp_by_ref_temp, self.config.ref_temp))
+
+        # TKE Budget terms
+        # Get Reynolds number for terms that require it
+        Re = float(self.config.Re[0]) if self.config.Re else 1.0
+
+        if self.config.tke_budget_on or self.config.tke_production_on:
+            self.statistics.append(TKE_Production())
+
+        if self.config.tke_budget_on or self.config.tke_dissipation_on:
+            self.statistics.append(TKE_Dissipation(Re))
+
+        if self.config.tke_budget_on or self.config.tke_convection_on:
+            self.statistics.append(TKE_Convection())
+
+        if self.config.tke_budget_on or self.config.tke_viscous_diffusion_on:
+            self.statistics.append(TKE_ViscousDiffusion(Re))
+
+        if self.config.tke_budget_on or self.config.tke_pressure_transport_on:
+            self.statistics.append(TKE_PressureTransport())
+
+        if self.config.tke_budget_on or self.config.tke_turbulent_diffusion_on:
+            self.statistics.append(TKE_TurbulentDiffusion())
 
     def compute_all(self) -> None:
         """Compute all registered statistics for all cases and timesteps"""

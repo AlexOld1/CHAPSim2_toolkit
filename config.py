@@ -29,6 +29,15 @@ u_prime_v_prime_on = True
 w_prime_sq_on = True
 v_prime_sq_on = True
 
+# TKE Budget terms
+tke_budget_on = False
+tke_production_on = False
+tke_dissipation_on = False
+tke_convection_on = False
+tke_viscous_diffusion_on = False
+tke_pressure_transport_on = False
+tke_turbulent_diffusion_on = False
+
 # Processing options ----------------------------------------------------------------------------------------------------------------------------------
 
 # normalisation (1D data)
