@@ -32,11 +32,12 @@ setup(
         "numpy>=1.20.0",
         "matplotlib>=3.3.0",
         "pandas>=1.2.0",
-        "vtk>=9.0.0",
-        "pyvista>=0.32.0",
         "tqdm>=4.60.0",
     ],
     extras_require={
+        "3d": [
+            "pyvista>=0.32.0",  # For 3D visualization (visualise_3d.py)
+        ],
         "dev": [
             "pytest>=6.0",
             "pytest-cov>=2.0",

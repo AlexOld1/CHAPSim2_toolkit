@@ -1,8 +1,46 @@
 import os
-import vtk
 import numpy as np
-from vtkmodules.util.numpy_support import vtk_to_numpy
-import pyvista as pv
+import xml.etree.ElementTree as ET
+import mmap
+
+# =====================================================================================================================================================
+# XDMF READING CONFIGURATION
+# =====================================================================================================================================================
+
+# Set to True to use memory-mapped file reading (can help on HPC/Lustre filesystems)
+USE_MMAP_READ = False
+
+# Set to True to load all variables, False to load only required ones (faster)
+LOAD_ALL_VARS = True
+
+# Variables required for Reynolds stress computation (base names without prefixes)
+_BASE_REQUIRED_VARS = [
+    # Velocities
+    'u1', 'u2', 'u3', 'ux', 'uy', 'uz', 'qx_ccc', 'qy_ccc', 'qz_ccc',
+    # Reynolds stresses
+    'uu11', 'uu12', 'uu13', 'uu22', 'uu23', 'uu33', 'uu', 'uv', 'vv', 'ww', 'uxux', 'uxuy', 'uyuy', 'uzuz',
+    # Velocity gradients
+    'du1dx', 'du1dy', 'du1dz', 'du2dx', 'du2dy', 'du2dz', 'du3dx', 'du3dy', 'du3dz',
+    # Dissipation terms
+    'dudu11', 'dudu12', 'dudu13', 'dudu22', 'dudu23', 'dudu33',
+    # TKE gradients
+    'dkdx', 'dkdy', 'dkdz', 'd2kdx2', 'd2kdy2', 'd2kdz2',
+    # Pressure terms
+    'pr', 'pru1', 'pru2', 'pru3', 'd_pu1p_dx', 'd_pu2p_dy', 'd_pu3p_dz',
+    # Turbulent diffusion
+    'd_uiuiu1_dx', 'd_uiuiu2_dy', 'd_uiuiu3_dz',
+    # Temperature
+    'T', 'temperature', 'temp', 'TT',
+]
+
+# Build full set including prefixed versions (tsp_avg_, t_avg_)
+REQUIRED_VARS = set(_BASE_REQUIRED_VARS)
+for prefix in ['tsp_avg_', 't_avg_']:
+    REQUIRED_VARS.update(f'{prefix}{var}' for var in _BASE_REQUIRED_VARS)
+
+# =====================================================================================================================================================
+# TEXT DATA UTILITIES
+# =====================================================================================================================================================
 
 def data_filepath(folder_path, case, quantity, timestep):
     return f'{folder_path}{case}/1_data/domain1_tsp_avg_{quantity}_{timestep}.dat'
@@ -13,33 +51,217 @@ def load_ts_avg_data(data_filepath):
     except OSError:
         print(f'Error loading data for {data_filepath}')
         return None
-    
+
 def get_quantities(thermo_on):
     quantities = ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu22','uu33','pr']
     if thermo_on:
         quantities.append('T')
     return quantities
 
+# =====================================================================================================================================================
+# XDMF FILE PATH UTILITIES
+# =====================================================================================================================================================
+
 def visu_file_paths(folder_path, case, timestep):
     file_names = [
         f'{folder_path}{case}/2_visu/domain1_flow_{timestep}.xdmf',
         f'{folder_path}{case}/2_visu/domain1_t_avg_flow_{timestep}.xdmf',
         f'{folder_path}{case}/2_visu/domain1_tsp_avg_flow_{timestep}.xdmf',
-        f'{folder_path}{case}/2_visu/domain1_mhd_{timestep}.xdmf',
         f'{folder_path}{case}/2_visu/domain1_thermo_{timestep}.xdmf',
         f'{folder_path}{case}/2_visu/domain1_t_avg_thermo_{timestep}.xdmf',
-        f'{folder_path}{case}/2_visu/domain1_tsp_avg_thermo_{timestep}.xdmf'
+        f'{folder_path}{case}/2_visu/domain1_tsp_avg_thermo_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_mhd_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_t_avg_mhd_{timestep}.xdmf',
+        f'{folder_path}{case}/2_visu/domain1_tsp_avg_mhd_{timestep}.xdmf',
     ]
     return file_names
 
-def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None):
+# =====================================================================================================================================================
+# XDMF READING (Pure Python - no VTK dependency)
+# =====================================================================================================================================================
+
+def read_binary_data_item(data_item, xdmf_dir):
     """
-    Reads XDMF files and extracts numpy arrays from VTK data.
+    Read binary data from a DataItem element.
+
+    Args:
+        data_item: XML DataItem element
+        xdmf_dir: Directory containing the XDMF file
+
+    Returns:
+        numpy array or None if reading fails
+    """
+    format_type = data_item.get('Format', 'Binary')
+    if format_type != 'Binary':
+        print(f"Unsupported format: {format_type}")
+        return None
+
+    # Get data properties
+    dims_str = data_item.get('Dimensions', '')
+    dims = tuple(int(d) for d in dims_str.split()) if dims_str else None
+
+    number_type = data_item.get('NumberType', 'Float')
+    precision = int(data_item.get('Precision', '8'))
+    seek = int(data_item.get('Seek', '0'))
+
+    # Determine numpy dtype
+    if number_type == 'Float':
+        dtype = np.float32 if precision == 4 else np.float64
+    elif number_type == 'Int':
+        dtype = np.int32 if precision == 4 else np.int64
+    else:
+        dtype = np.float64
+
+    # Get binary file path
+    bin_path = data_item.text.strip() if data_item.text else None
+    if bin_path is None:
+        return None
+
+    # Resolve relative path - look in ../1_data relative to xdmf_dir
+    data_dir = os.path.normpath(os.path.join(xdmf_dir, '..', '1_data'))
+    bin_filename = os.path.basename(bin_path)
+    bin_path = os.path.join(data_dir, bin_filename)
+
+    if not os.path.isfile(bin_path):
+        print(f"Binary file not found: {bin_path}")
+        return None
+
+    try:
+        # Calculate expected number of elements to read
+        # This avoids np.fromfile reading until EOF, which can hang on Lustre/HPC filesystems
+        itemsize = np.dtype(dtype).itemsize
+        if dims:
+            count = int(np.prod(dims))
+        else:
+            # Fallback: calculate from file size
+            file_size = os.path.getsize(bin_path)
+            count = (file_size - seek) // itemsize
+
+        if USE_MMAP_READ:
+            # Memory-mapped reading - can be more reliable on some HPC filesystems
+            with open(bin_path, 'rb') as f:
+                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+                byte_count = count * itemsize
+                data = np.frombuffer(mm[seek:seek + byte_count], dtype=dtype).copy()
+                mm.close()
+        else:
+            # Standard reading with explicit count (fixes Lustre EOF hanging)
+            with open(bin_path, 'rb') as f:
+                f.seek(seek)
+                data = np.fromfile(f, dtype=dtype, count=count)
+
+        if dims:
+            expected_size = int(np.prod(dims))
+            if data.size >= expected_size:
+                data = data[:expected_size].reshape(dims)
+            elif data.size < expected_size:
+                print(f"Warning: Data size mismatch for {bin_path} (got {data.size}, expected {expected_size})")
+
+        return data
+
+    except Exception as e:
+        print(f"Error reading {bin_path}: {e}")
+        return None
+
+
+def parse_xdmf_file(xdmf_path, load_all_vars=None, sample_stride=1):
+    """
+    Parse XDMF file and extract data from associated binary files.
+
+    Args:
+        xdmf_path: Path to the XDMF file
+        load_all_vars: If True, load all variables. If False, only load required ones.
+                       If None, uses module-level LOAD_ALL_VARS setting.
+        sample_stride: Stride for sampling in x and z directions (1 = no sampling)
+
+    Returns:
+        tuple: (arrays dict, grid_info dict)
+    """
+    if load_all_vars is None:
+        load_all_vars = LOAD_ALL_VARS
+
+    if not os.path.isfile(xdmf_path):
+        return {}, {}
+
+    try:
+        # Read file content first, then parse from string
+        # This avoids ET.parse() holding file locks on Lustre filesystems
+        with open(xdmf_path, 'r') as f:
+            xml_content = f.read()
+        root = ET.fromstring(xml_content)
+    except ET.ParseError as e:
+        print(f"Error parsing {xdmf_path}: {e}")
+        return {}, {}
+    except IOError as e:
+        print(f"Error reading {xdmf_path}: {e}")
+        return {}, {}
+
+    arrays = {}
+    grid_info = {}
+    xdmf_dir = os.path.dirname(xdmf_path)
+
+    # Find grid information
+    for grid in root.iter('Grid'):
+        # Get topology dimensions
+        for topo in grid.iter('Topology'):
+            dims_str = topo.get('Dimensions')
+            if dims_str:
+                dims = tuple(int(d) for d in dims_str.split())
+                grid_info['node_dimensions'] = dims
+                grid_info['cell_dimensions'] = tuple(d - 1 for d in dims)
+
+        # Collect all data items to read
+        read_tasks = []
+
+        # Get geometry (grid coordinates)
+        for geom in grid.iter('Geometry'):
+            geom_type = geom.get('GeometryType')
+            if geom_type == 'VXVYVZ':
+                data_items = list(geom.iter('DataItem'))
+                coord_names = ['x', 'y', 'z']
+                for i, data_item in enumerate(data_items[:3]):
+                    read_tasks.append(('grid', f'grid_{coord_names[i]}', data_item))
+
+        # Get attributes (flow variables) - filter to only required ones if enabled
+        skipped_vars = []
+        for attribute in grid.iter('Attribute'):
+            name = attribute.get('Name')
+            data_item = attribute.find('DataItem')
+            if data_item is not None:
+                if load_all_vars or name in REQUIRED_VARS:
+                    read_tasks.append(('array', name, data_item))
+                else:
+                    skipped_vars.append(name)
+
+        # Read all data items
+        if skipped_vars:
+            print(f"  Skipping {len(skipped_vars)} unneeded variables: {', '.join(skipped_vars[:3])}{'...' if len(skipped_vars) > 3 else ''}")
+
+        for task_type, name, data_item in read_tasks:
+            data = read_binary_data_item(data_item, xdmf_dir)
+            if data is not None:
+                # Apply sampling in x and z directions if enabled (dims are typically z, y, x)
+                if sample_stride > 1 and len(data.shape) == 3:
+                    data = data[::sample_stride, :, ::sample_stride]
+
+                if task_type == 'grid':
+                    grid_info[name] = data
+                else:
+                    arrays[name] = data
+
+    return arrays, grid_info
+
+
+def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None, load_all_vars=None, sample_stride=1):
+    """
+    Reads XDMF files and extracts numpy arrays from binary data.
 
     Args:
         file_names (list): List of XDMF file paths to read
         case (str, optional): Case identifier for dictionary key
         timestep (str, optional): Timestep identifier for dictionary key
+        load_all_vars (bool, optional): If True, load all variables. If False, only required ones.
+        sample_stride (int): Stride for sampling in x and z directions (1 = no sampling)
 
     Returns:
         tuple: (visu_arrays_dic dict, grid_info dict)
@@ -54,11 +276,10 @@ def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None):
 
         Otherwise returns flat dictionary:
         {
-            "file_type_cell_variable_name": numpy_array,
+            "variable_name": numpy_array,
             ...
         }
     """
-
     # Determine if we should use nested structure
     use_nested = case is not None and timestep is not None
 
@@ -74,25 +295,21 @@ def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None):
     grid_info = {}
 
     for xdmf_file in file_names:
+        if not os.path.isfile(xdmf_file):
+            continue
+
         try:
             print(f"Opening file: {xdmf_file}")
 
-            # Create an XdmfReader
-            reader = vtk.vtkXdmfReader()
-            reader.SetFileName(xdmf_file)
+            # Parse the XDMF file
+            arrays, file_grid_info = parse_xdmf_file(xdmf_file, load_all_vars=load_all_vars, sample_stride=sample_stride)
 
-            # Try to update the reader - catch XML parsing errors
-            try:
-                reader.Update()
-                output = reader.GetOutput()
-            except Exception as xml_error:
-                print(f"XML parsing error in {xdmf_file}: {str(xml_error)}")
-                continue
-
-            if output and output.GetNumberOfCells() > 0:
-                # Extract file type from filename for prefixing
-                if 't_avg' in xdmf_file:
-                    file_type = 'time_avg'
+            if arrays:
+                # Extract file type from filename for prefixing (optional)
+                if 'tsp_avg' in xdmf_file:
+                    file_type = 'tsp_avg'
+                elif 't_avg' in xdmf_file:
+                    file_type = 't_avg'
                 elif '_mhd_' in xdmf_file:
                     file_type = 'mhd'
                 elif '_thermo_' in xdmf_file:
@@ -100,15 +317,15 @@ def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None):
                 else:
                     file_type = 'flow'
 
-                # Extract grid information if not already done
-                if not grid_info:
-                    grid_info = extract_grid_info(output)
-                    print(f"Grid info: {grid_info}")
+                # Store grid info if not already stored
+                if not grid_info and file_grid_info:
+                    grid_info = file_grid_info
+                    if 'node_dimensions' in grid_info:
+                        print(f"Grid info: node_dimensions={grid_info['node_dimensions']}, cell_dimensions={grid_info.get('cell_dimensions', 'N/A')}")
 
-                # Get arrays from the dataset
-                dataset_arrays = get_vtk_arrays_with_numpy(output, file_type, grid_info)
-                inner_dict.update(dataset_arrays)
-                print(f"Successfully extracted {len(dataset_arrays)} arrays from {file_type} file")
+                # Add arrays to dictionary
+                inner_dict.update(arrays)
+                print(f"Successfully extracted {len(arrays)} arrays from {file_type} file")
             else:
                 print(f"Warning: No valid output from {xdmf_file}, file missing or empty")
 
@@ -118,87 +335,55 @@ def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None):
 
     return visu_arrays_dic, grid_info
 
-def extract_grid_info(dataset):
+
+def extract_grid_info_from_arrays(grid_info):
     """
-    Extract grid dimensions and spacing information from VTK dataset.
-    
+    Extract grid dimensions and bounds from grid coordinate arrays.
+
     Args:
-        dataset: VTK dataset object
-    
+        grid_info: Dictionary containing grid_x, grid_y, grid_z arrays
+
     Returns:
-        dict: Grid information including dimensions and spacing
+        dict: Enhanced grid information including bounds
     """
-    grid_info = {}
-    
+    enhanced_info = dict(grid_info)
+
     try:
-        # For structured grids
-        if hasattr(dataset, 'GetDimensions'):
-            dims = dataset.GetDimensions()
-            grid_info['node_dimensions'] = dims
-            grid_info['cell_dimensions'] = (dims[0]-1, dims[1]-1, dims[2]-1)
-            print(f"Node dimensions: {dims}")
-            print(f"Cell dimensions: {grid_info['cell_dimensions']}")
-            
-        # Get bounds
-        if hasattr(dataset, 'GetBounds'):
-            bounds = dataset.GetBounds()
-            grid_info['bounds'] = bounds
-            print(f"Domain bounds: x=[{bounds[0]:.3f}, {bounds[1]:.3f}], "
-                  f"y=[{bounds[2]:.3f}, {bounds[3]:.3f}], z=[{bounds[4]:.3f}, {bounds[5]:.3f}]")
-        
-        # Calculate average spacing if possible
-        if 'node_dimensions' in grid_info and 'bounds' in grid_info:
-            dx = (bounds[1] - bounds[0]) / (dims[0] - 1)
-            dy = (bounds[3] - bounds[2]) / (dims[1] - 1)
-            dz = (bounds[5] - bounds[4]) / (dims[2] - 1)
-            grid_info['average_spacing'] = (dx, dy, dz)
-            print(f"Average Grid spacing: dx={dx:.6f}, dy={dy:.6f}, dz={dz:.6f}")
-            
+        if 'grid_x' in grid_info and 'grid_y' in grid_info and 'grid_z' in grid_info:
+            x = grid_info['grid_x']
+            y = grid_info['grid_y']
+            z = grid_info['grid_z']
+
+            enhanced_info['bounds'] = (
+                float(x.min()), float(x.max()),
+                float(y.min()), float(y.max()),
+                float(z.min()), float(z.max())
+            )
+
+            # Calculate average spacing
+            if len(x) > 1:
+                dx = (x.max() - x.min()) / (len(x) - 1)
+            else:
+                dx = 0
+            if len(y) > 1:
+                dy = (y.max() - y.min()) / (len(y) - 1)
+            else:
+                dy = 0
+            if len(z) > 1:
+                dz = (z.max() - z.min()) / (len(z) - 1)
+            else:
+                dz = 0
+
+            enhanced_info['average_spacing'] = (dx, dy, dz)
+
     except Exception as e:
         print(f"Could not extract complete grid info: {str(e)}")
-        
-    return grid_info
 
-def get_vtk_arrays_with_numpy(dataset, file_type="", grid_info=None):
-    """
-    Extracts VTK arrays and converts them to NumPy arrays.
-    
-    Args:
-        dataset: VTK dataset object
-        file_type (str): Type of file for prefixing array names
-        grid_info (dict): Grid information for reshaping arrays
-    
-    Returns:
-        dict: Dictionary of numpy arrays
-    """
-    arrays = {}
-    
-    # Process Cell Data
-    if dataset.GetCellData() and dataset.GetCellData().GetNumberOfArrays() > 0:
-        print(f"\nCell Data Arrays ({file_type}):")
-        for i in range(dataset.GetCellData().GetNumberOfArrays()):
-            array = dataset.GetCellData().GetArray(i)
-            name = array.GetName()
-            numpy_array = vtk_to_numpy(array)
-            
-            # Reshape to 3D if grid info available
-            if grid_info and 'cell_dimensions' in grid_info:
-                try:
-                    dims = grid_info['cell_dimensions']
-                    if numpy_array.size == dims[0] * dims[1] * dims[2]:
-                        numpy_array = numpy_array.reshape(dims[2], dims[1], dims[0])  # VTK uses different ordering
-                        print(f"  {name}: Shape - {numpy_array.shape} (3D), Type - {numpy_array.dtype}")
-                    else:
-                        print(f"  {name}: Shape - {numpy_array.shape} (1D - size mismatch), Type - {numpy_array.dtype}")
-                except:
-                    print(f"  {name}: Shape - {numpy_array.shape} (1D - reshape failed), Type - {numpy_array.dtype}")
-            else:
-                print(f"  {name}: Shape - {numpy_array.shape} (1D), Type - {numpy_array.dtype}")
-            
-            key = f"{file_type}_cell_{name}" if file_type else f"cell_{name}"
-            arrays[key] = numpy_array
-    
-    return arrays
+    return enhanced_info
+
+# =====================================================================================================================================================
+# OUTPUT UTILITIES
+# =====================================================================================================================================================
 
 def reader_output_summary(arrays_dict):
     """
@@ -230,24 +415,14 @@ def reader_output_summary(arrays_dict):
             print(f"  Shape: {array.shape},  Min value: {np.min(array):.6e},  Max value: {np.max(array):.6e}   Mean value: {np.mean(array):.6e}")
             print("-" * 40)
 
-def visualise_domain_var(output, flow_var):
-
-    pv_mesh = pv.wrap(output)
-
-    if pv_mesh:
-
-        pv_mesh.cell_data[flow_var] = flow_var
-        plotter = pv.Plotter()
-        plotter.add_mesh(pv_mesh, scalars="qx_velocity", show_edges=True, cmap="viridis")
-        plotter.show()
-
-    else:
-                    print("Error: Could not wrap VTK output to PyVista mesh.")
+# =====================================================================================================================================================
+# DATA CLEANING UTILITIES
+# =====================================================================================================================================================
 
 def clean_dat_file(input_file, output_file, expected_cols):
     clean_data = []
     bad_lines = []
-    
+
     with open(input_file, 'r') as f:
         for line_num, line in enumerate(f, 1):
             if line_num <= 3:
@@ -258,19 +433,21 @@ def clean_dat_file(input_file, output_file, expected_cols):
                     clean_data.append(values)
                 else:
                     bad_lines.append((line_num, len(values), line.strip()))
-                    
+
             except ValueError as e:
                 bad_lines.append((line_num, 'ERROR', line.strip()))
-      
+
     if bad_lines:
         print(f"Found {len(bad_lines)} problematic lines")
-        #for line_num, cols, content in bad_lines:
-        #    print(f"  Line {line_num} ({cols} cols): {content[:80]}...")
-    
-    np.savetxt(f'monitor_point_plots/{output_file}', clean_data, fmt='%.5E')  # Save clean data
+
+    np.savetxt(f'monitor_point_plots/{output_file}', clean_data, fmt='%.5E')
     print(f"\nSaved {len(clean_data)} clean lines to {output_file}")
-    
+
     return np.array(clean_data)
+
+# =====================================================================================================================================================
+# PLOTTING UTILITIES
+# =====================================================================================================================================================
 
 def get_col(case, cases, colours):
     if len(cases) > 1:
@@ -303,4 +480,3 @@ def get_plane_data(domain_array, plane, index):
     else:
         print(f"Error: Invalid plane '{plane}' specified. Use 'xy', 'xz', or 'yz'.")
     return
-

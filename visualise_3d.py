@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import math
 import os
+import pyvista as pv
 
 # import modules --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -24,6 +25,20 @@ visualisation_on = False
 #instant_phi_on = False
 
 # 3D visualisation data (.xdmf files)
+
+def visualise_domain_var(output, flow_var):
+
+    pv_mesh = pv.wrap(output)
+
+    if pv_mesh:
+
+        pv_mesh.cell_data[flow_var] = flow_var
+        plotter = pv.Plotter()
+        plotter.add_mesh(pv_mesh, scalars="qx_velocity", show_edges=True, cmap="viridis")
+        plotter.show()
+
+    else:
+                    print("Error: Could not wrap VTK output to PyVista mesh.")
 
 visu_data = {}
 visu_data.clear()

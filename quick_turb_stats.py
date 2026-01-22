@@ -7,12 +7,13 @@ Requires only numpy and matplotlib.
 
 import numpy as np
 import matplotlib.pyplot as plt
-import xml.etree.ElementTree as ET
 import os
 import math
-import mmap
 import glob
 from tqdm import tqdm
+
+# Import the shared XDMF reader from utils
+import utils as ut
 
 # Enable tab completion for path input
 try:
@@ -38,190 +39,8 @@ try:
 except ImportError:
     pass  # readline not available on all platforms
 
-# Set to True to use memory-mapped file reading (can help on HPC/Lustre filesystems)
-USE_MMAP_READ = False
 
-# Sampling stride for x and z directions (1 = no sampling, 2 = every 2nd point, etc.)
-# Higher values = faster loading but less averaging samples
-SAMPLE_STRIDE_XZ = 1
-
-# Variables required for Reynolds stress computation (base names without prefixes)
-_BASE_REQUIRED_VARS = [
-    # Velocities
-    'u1', 'u2', 'u3', 'ux', 'uy', 'uz', 'qx_ccc', 'qy_ccc', 'qz_ccc',
-    # Reynolds stresses
-    'uu11', 'uu12', 'uu22', 'uu33', 'uu', 'uv', 'vv', 'ww', 'uxux', 'uxuy', 'uyuy', 'uzuz',
-    # Temperature
-    'T', 'temperature', 'temp', 'TT',
-]
-
-# Build full set including prefixed versions (tsp_avg_, t_avg_)
-REQUIRED_VARS = set(_BASE_REQUIRED_VARS)
-for prefix in ['tsp_avg_', 't_avg_']:
-    REQUIRED_VARS.update(f'{prefix}{var}' for var in _BASE_REQUIRED_VARS)
-
-# Set to True to load all variables (slower), False to load only required ones (faster)
-LOAD_ALL_VARS = False
-
-
-def parse_xdmf_file(xdmf_path):
-    """
-    Parse XDMF file and extract data from associated binary files.
-    Returns dictionary of variable names to numpy arrays and grid info.
-    """
-    if not os.path.isfile(xdmf_path):
-        return {}, {}
-
-    try:
-        # Read file content first, then parse from string
-        # This avoids ET.parse() holding file locks on Lustre filesystems
-        with open(xdmf_path, 'r') as f:
-            xml_content = f.read()
-        root = ET.fromstring(xml_content)
-    except ET.ParseError as e:
-        print(f"Error parsing {xdmf_path}: {e}")
-        return {}, {}
-    except IOError as e:
-        print(f"Error reading {xdmf_path}: {e}")
-        return {}, {}
-
-    arrays = {}
-    grid_info = {}
-    xdmf_dir = os.path.dirname(xdmf_path)
-
-    # Find grid information
-    for grid in root.iter('Grid'):
-        # Get topology dimensions
-        for topo in grid.iter('Topology'):
-            dims_str = topo.get('Dimensions')
-            if dims_str:
-                dims = tuple(int(d) for d in dims_str.split())
-                grid_info['node_dimensions'] = dims
-                grid_info['cell_dimensions'] = tuple(d - 1 for d in dims)
-
-        # Collect all data items to read for progress bar
-        read_tasks = []
-
-        # Get geometry (grid coordinates)
-        for geom in grid.iter('Geometry'):
-            geom_type = geom.get('GeometryType')
-            if geom_type == 'VXVYVZ':
-                data_items = list(geom.iter('DataItem'))
-                coord_names = ['x', 'y', 'z']
-                for i, data_item in enumerate(data_items[:3]):
-                    read_tasks.append(('grid', f'grid_{coord_names[i]}', data_item))
-
-        # Get attributes (flow variables) - filter to only required ones if enabled
-        skipped_vars = []
-        for attribute in grid.iter('Attribute'):
-            name = attribute.get('Name')
-            data_item = attribute.find('DataItem')
-            if data_item is not None:
-                if LOAD_ALL_VARS or name in REQUIRED_VARS:
-                    read_tasks.append(('array', name, data_item))
-                else:
-                    skipped_vars.append(name)
-
-        # Read all data items with progress bar
-        xdmf_name = os.path.basename(xdmf_path)
-        if skipped_vars:
-            print(f"  Skipping {len(skipped_vars)} unneeded variables: {', '.join(skipped_vars[:3])}{'...' if len(skipped_vars) > 3 else ''}")
-        with tqdm(total=len(read_tasks), desc=f"  {xdmf_name}", unit="var", leave=False) as pbar:
-            for task_type, name, data_item in read_tasks:
-                pbar.set_postfix_str(name[:20])
-                data = read_binary_data_item(data_item, xdmf_dir)
-                if data is not None:
-                    if task_type == 'grid':
-                        grid_info[name] = data
-                    else:
-                        arrays[name] = data
-                pbar.update(1)
-
-    return arrays, grid_info
-
-
-def read_binary_data_item(data_item, xdmf_dir):
-    """
-    Read binary data from a DataItem element.
-    """
-    format_type = data_item.get('Format', 'Binary')
-    if format_type != 'Binary':
-        print(f"Unsupported format: {format_type}")
-        return None
-
-    # Get data properties
-    dims_str = data_item.get('Dimensions', '')
-    dims = tuple(int(d) for d in dims_str.split()) if dims_str else None
-
-    number_type = data_item.get('NumberType', 'Float')
-    precision = int(data_item.get('Precision', '8'))
-    seek = int(data_item.get('Seek', '0'))
-
-    # Determine numpy dtype
-    if number_type == 'Float':
-        dtype = np.float32 if precision == 4 else np.float64
-    elif number_type == 'Int':
-        dtype = np.int32 if precision == 4 else np.int64
-    else:
-        dtype = np.float64
-
-    # Get binary file path
-    bin_path = data_item.text.strip() if data_item.text else None
-    if bin_path is None:
-        return None
-
-    # Resolve relative path - look in ../1_data relative to xdmf_dir
-    data_dir = os.path.normpath(os.path.join(xdmf_dir, '..', '1_data'))
-    bin_filename = os.path.basename(bin_path)
-    bin_path = os.path.join(data_dir, bin_filename)
-
-    if not os.path.isfile(bin_path):
-        print(f"Binary file not found: {bin_path}")
-        return None
-
-    try:
-        # Calculate expected number of elements to read
-        # This avoids np.fromfile reading until EOF, which can hang on Lustre/HPC filesystems
-        itemsize = np.dtype(dtype).itemsize
-        if dims:
-            count = int(np.prod(dims))
-        else:
-            # Fallback: calculate from file size
-            file_size = os.path.getsize(bin_path)
-            count = (file_size - seek) // itemsize
-
-        if USE_MMAP_READ:
-            # Memory-mapped reading - can be more reliable on some HPC filesystems
-            with open(bin_path, 'rb') as f:
-                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-                byte_count = count * itemsize
-                data = np.frombuffer(mm[seek:seek + byte_count], dtype=dtype).copy()
-                mm.close()
-        else:
-            # Standard reading with explicit count (fixes Lustre EOF hanging)
-            with open(bin_path, 'rb') as f:
-                f.seek(seek)
-                data = np.fromfile(f, dtype=dtype, count=count)
-
-        if dims:
-            expected_size = int(np.prod(dims))
-            if data.size >= expected_size:
-                data = data[:expected_size].reshape(dims)
-            elif data.size < expected_size:
-                print(f"Warning: Data size mismatch for {bin_path} (got {data.size}, expected {expected_size})")
-
-        # Apply sampling in x and z directions if enabled (dims are typically z, y, x)
-        if SAMPLE_STRIDE_XZ > 1 and data is not None and len(data.shape) == 3:
-            data = data[::SAMPLE_STRIDE_XZ, :, ::SAMPLE_STRIDE_XZ]
-
-        return data
-
-    except Exception as e:
-        print(f"Error reading {bin_path}: {e}")
-        return None
-
-
-def load_xdmf_data(visu_folder, timestep):
+def load_xdmf_data(visu_folder, timestep, sample_stride=1):
     """
     Load all available XDMF data from the 2_visu folder.
     Prioritises tsp_avg (time-space averaged) files, falls back to t_avg (time averaged) if not found.
@@ -268,10 +87,16 @@ def load_xdmf_data(visu_folder, timestep):
     existing_files = [(p, os.path.join(visu_folder, p)) for p in file_patterns
                       if os.path.isfile(os.path.join(visu_folder, p))]
 
+    # Use utils.py's parse_xdmf_file for each file
     with tqdm(total=len(existing_files), desc="Loading XDMF files", unit="file") as pbar:
         for pattern, filepath in existing_files:
             pbar.set_postfix_str(pattern[:30])
-            arrays, file_grid_info = parse_xdmf_file(filepath)
+
+            # Use the shared XDMF reader from utils
+            # For tsp_avg data, don't apply sampling (already 1D)
+            # For t_avg data, apply sampling in x/z
+            stride = 1 if is_space_averaged else sample_stride
+            arrays, file_grid_info = ut.parse_xdmf_file(filepath, load_all_vars=False, sample_stride=stride)
 
             # Store grid info from first file that has it
             if not grid_info and file_grid_info:
@@ -631,8 +456,6 @@ def get_user_input():
 
 def main():
     """Main execution function."""
-    global SAMPLE_STRIDE_XZ
-
     # Get user input
     config = get_user_input()
     if config is None:
@@ -640,8 +463,7 @@ def main():
 
     print("\n" + "=" * 60)
     print("Loading data...")
-    if not LOAD_ALL_VARS:
-        print("(Loading only required variables for Reynolds stress computation)")
+    print("(Loading only required variables for Reynolds stress computation)")
     print("=" * 60)
 
     # Check if tsp_avg files exist to determine if we need sampling
@@ -650,15 +472,12 @@ def main():
     tsp_avg_exists = os.path.isfile(os.path.join(visu_folder, f'domain1_tsp_avg_flow_{timestep}.xdmf'))
 
     # Only apply sampling for t_avg (3D) data, not tsp_avg (already 1D)
-    if tsp_avg_exists:
-        SAMPLE_STRIDE_XZ = 1  # tsp_avg is already 1D, no sampling needed
-    else:
-        SAMPLE_STRIDE_XZ = config['sample_stride']
-        if SAMPLE_STRIDE_XZ > 1:
-            print(f"(Sampling every {SAMPLE_STRIDE_XZ} points in x/z for spatial averaging)")
+    sample_stride = 1 if tsp_avg_exists else config['sample_stride']
+    if sample_stride > 1:
+        print(f"(Sampling every {sample_stride} points in x/z for spatial averaging)")
 
     # Load XDMF data
-    data, grid_info, is_space_averaged = load_xdmf_data(visu_folder, timestep)
+    data, grid_info, is_space_averaged = load_xdmf_data(visu_folder, timestep, sample_stride)
 
     if not data:
         print("Error: No data loaded. Check file paths.")
