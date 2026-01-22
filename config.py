@@ -4,13 +4,13 @@
 
 # format: folder_path/case/1_data/quantity_timestep.dat
 #folder_path = '/home/alex/sim_results/mhd_channel_validation/CPG/'
-folder_path = '/home/alex/sim_results/elev_modes/'
+folder_path = ''
 input_format = 'visu' # 'text' (.dat) or 'visu' (.xdmf)
-cases = ['isothermal_base_cases'] # case names must match folder names exactly
-timesteps = ['100000']
+cases = ['Tests'] # case names must match folder names exactly
+timesteps = ['680000']
 
-thermo_on = False
-mhd_on = False
+thermo_on = True    
+mhd_on = True
 
 forcing = 'CMF' # 'CMF' or 'CPG'
 Re = [5000] # indexing matches 'cases' if different Re used for different cases. Use bulk reference value for CPG.
@@ -30,13 +30,13 @@ w_prime_sq_on = True
 v_prime_sq_on = True
 
 # TKE Budget terms
-tke_budget_on = False
-tke_production_on = False
-tke_dissipation_on = False
-tke_convection_on = False
-tke_viscous_diffusion_on = False
-tke_pressure_transport_on = False
-tke_turbulent_diffusion_on = False
+tke_budget_on = True
+tke_production_on = True
+tke_dissipation_on = True
+tke_convection_on = True
+tke_viscous_diffusion_on = True
+tke_pressure_transport_on = True
+tke_turbulent_diffusion_on = True
 
 # Processing options ----------------------------------------------------------------------------------------------------------------------------------
 

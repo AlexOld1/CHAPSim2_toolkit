@@ -2,6 +2,7 @@ import os
 import numpy as np
 import xml.etree.ElementTree as ET
 import mmap
+from tqdm import tqdm
 
 # =====================================================================================================================================================
 # XDMF READING CONFIGURATION
@@ -11,7 +12,7 @@ import mmap
 USE_MMAP_READ = False
 
 # Set to True to load all variables, False to load only required ones (faster)
-LOAD_ALL_VARS = True
+LOAD_ALL_VARS = False
 
 # Variables required for Reynolds stress computation (base names without prefixes)
 _BASE_REQUIRED_VARS = [
@@ -77,7 +78,7 @@ def visu_file_paths(folder_path, case, timestep):
     return file_names
 
 # =====================================================================================================================================================
-# XDMF READING (Pure Python - no VTK dependency)
+# XDMF READING UTILITIES
 # =====================================================================================================================================================
 
 def read_binary_data_item(data_item, xdmf_dir):
@@ -235,9 +236,10 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, sample_stride=1):
 
         # Read all data items
         if skipped_vars:
-            print(f"  Skipping {len(skipped_vars)} unneeded variables: {', '.join(skipped_vars[:3])}{'...' if len(skipped_vars) > 3 else ''}")
+            tqdm.write(f"  Skipping {len(skipped_vars)} unneeded variables: {', '.join(skipped_vars[:3])}{'...' if len(skipped_vars) > 3 else ''}")
 
-        for task_type, name, data_item in read_tasks:
+        xdmf_name = os.path.basename(xdmf_path)
+        for task_type, name, data_item in tqdm(read_tasks, desc=f"  Reading {xdmf_name}", unit="var", leave=False):
             data = read_binary_data_item(data_item, xdmf_dir)
             if data is not None:
                 # Apply sampling in x and z directions if enabled (dims are typically z, y, x)
@@ -252,7 +254,7 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, sample_stride=1):
     return arrays, grid_info
 
 
-def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None, load_all_vars=None, sample_stride=1):
+def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None, sample_stride=1, data_types=None):
     """
     Reads XDMF files and extracts numpy arrays from binary data.
 
@@ -262,6 +264,13 @@ def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None, load_al
         timestep (str, optional): Timestep identifier for dictionary key
         load_all_vars (bool, optional): If True, load all variables. If False, only required ones.
         sample_stride (int): Stride for sampling in x and z directions (1 = no sampling)
+        data_types (list, optional): List of data types to load. If None, loads all files.
+            Valid types: 'inst', 't_avg', 'tsp_avg',
+            or specific combinations like 't_avg_flow', 'tsp_avg_thermo', etc.
+            Examples:
+                - ['tsp_avg'] loads only time-space averaged files (flow, thermo, mhd)
+                - ['inst'] loads all instantaneous files (flow, thermo, mhd)
+                - ['tsp_avg_flow'] loads only time-space averaged flow files
 
     Returns:
         tuple: (visu_arrays_dic dict, grid_info dict)
@@ -294,12 +303,38 @@ def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None, load_al
 
     grid_info = {}
 
-    for xdmf_file in file_names:
-        if not os.path.isfile(xdmf_file):
-            continue
+    # Filter to only existing files for accurate progress bar
+    existing_files = [f for f in file_names if os.path.isfile(f)]
 
+    # Filter by data types if specified
+    if data_types is not None:
+        filtered_files = []
+        for f in existing_files:
+            filename = os.path.basename(f)
+            # Check if file matches any of the requested data types
+            for dtype in data_types:
+                if dtype in ['tsp_avg', 't_avg']:
+                    # Match prefix patterns like 'tsp_avg_flow', 'tsp_avg_thermo', 'tsp_avg_mhd'
+                    if f'{dtype}_' in filename:
+                        filtered_files.append(f)
+                        break
+                elif dtype == 'inst':
+                    # Match instantaneous files (flow, thermo, mhd without t_avg or tsp_avg prefix)
+                    if 't_avg' not in filename and 'tsp_avg' not in filename:
+                        filtered_files.append(f)
+                        break
+                else:
+                    # Match specific combinations like 'tsp_avg_flow', 't_avg_thermo'
+                    if dtype in filename:
+                        filtered_files.append(f)
+                        break
+        existing_files = filtered_files
+        if data_types:
+            tqdm.write(f"Filtering for data types: {data_types}")
+
+    for xdmf_file in tqdm(existing_files, desc="Processing XDMF files", unit="file"):
         try:
-            print(f"Opening file: {xdmf_file}")
+            tqdm.write(f"Opening file: {xdmf_file}")
 
             # Parse the XDMF file
             arrays, file_grid_info = parse_xdmf_file(xdmf_file, load_all_vars=load_all_vars, sample_stride=sample_stride)
@@ -321,16 +356,24 @@ def read_xdmf_extract_numpy_arrays(file_names, case=None, timestep=None, load_al
                 if not grid_info and file_grid_info:
                     grid_info = file_grid_info
                     if 'node_dimensions' in grid_info:
-                        print(f"Grid info: node_dimensions={grid_info['node_dimensions']}, cell_dimensions={grid_info.get('cell_dimensions', 'N/A')}")
+                        tqdm.write(f"Grid info: node_dimensions={grid_info['node_dimensions']}, cell_dimensions={grid_info.get('cell_dimensions', 'N/A')}")
 
-                # Add arrays to dictionary
-                inner_dict.update(arrays)
-                print(f"Successfully extracted {len(arrays)} arrays from {file_type} file")
+                # Add arrays to dictionary, stripping averaging prefixes for consistency
+                for var_name, var_data in arrays.items():
+                    # Strip tsp_avg_ or t_avg_ prefix so statistics code can use base names
+                    if var_name.startswith('tsp_avg_'):
+                        base_name = var_name[8:]  # Remove 'tsp_avg_'
+                    elif var_name.startswith('t_avg_'):
+                        base_name = var_name[6:]  # Remove 't_avg_'
+                    else:
+                        base_name = var_name
+                    inner_dict[base_name] = var_data
+                tqdm.write(f"Successfully extracted {len(arrays)} arrays from {file_type} file")
             else:
-                print(f"Warning: No valid output from {xdmf_file}, file missing or empty")
+                tqdm.write(f"Warning: No valid output from {xdmf_file}, file missing or empty")
 
         except Exception as e:
-            print(f"Error processing {xdmf_file}: {str(e)}")
+            tqdm.write(f"Error processing {xdmf_file}: {str(e)}")
             continue
 
     return visu_arrays_dic, grid_info

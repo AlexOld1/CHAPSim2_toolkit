@@ -205,12 +205,16 @@ class PlotConfig:
 # DATA LOADING & MANAGEMENT
 # =====================================================================================================================================================
 
-def create_data_loader(config: Config):
+def create_data_loader(config: Config, data_types: List[str] = None):
     """
     Factory function to create the appropriate data loader based on input_format.
 
     Args:
         config: Configuration object
+        data_types: List of XDMF data types to load. Only used for XDMF format.
+                    Valid types: 'inst', 't_avg', 'tsp_avg', or specific combinations
+                    like 'tsp_avg_flow', 't_avg_thermo', etc.
+                    Defaults to ['tsp_avg'] for turb_stats (time-space averaged data).
 
     Returns:
         Data loader instance (TurbulenceTextData or TurbulenceXDMFData)
@@ -218,11 +222,15 @@ def create_data_loader(config: Config):
     fmt = config.input_format.lower()
 
     if fmt in ['xdmf', 'visu']:
-        print("Using XDMF data loader...")
+        # Default to tsp_avg for turb_stats which only needs time-space averaged data
+        if data_types is None:
+            data_types = ['tsp_avg']
+        print(f"Using XDMF data loader with data_types={data_types}...")
         return TurbulenceXDMFData(
             config.folder_path,
             config.cases,
-            config.timesteps
+            config.timesteps,
+            data_types=data_types
         )
     elif fmt in ['dat', 'text']:
         print("Using text (.dat) data loader...")
@@ -296,10 +304,11 @@ class TurbulenceTextData:
 class TurbulenceXDMFData:
     """Manages all data from .xdmf files"""
 
-    def __init__(self, folder_path: str, cases: List[str], timesteps: List[str]):
+    def __init__(self, folder_path: str, cases: List[str], timesteps: List[str], data_types: List[str] = None):
         self.folder_path = folder_path
         self.cases = cases
         self.timesteps = timesteps
+        self.data_types = data_types
         # Nested structure: {case_timestep: {variable: array}}
         self.data: Dict[str, Dict[str, np.ndarray]] = {}
         self.grid_info: Dict = {}
@@ -324,17 +333,73 @@ class TurbulenceXDMFData:
             print(f'No .xdmf files found for {case}, {timestep}')
             return
 
-        # Load the XDMF files
-        arrays, grid_info = ut.read_xdmf_extract_numpy_arrays(file_names, case=case, timestep=timestep)
+        # Load the XDMF files (filtered by data_types if specified)
+        arrays, grid_info = ut.xdmf_reader_wrapper(file_names, case=case, timestep=timestep, data_types=self.data_types)
 
         if arrays and key in arrays:
-            self.data[key] = arrays[key]
-
             # Store grid info if not already stored
             if not self.grid_info and grid_info:
                 self.grid_info = grid_info
 
-            print(f"Loaded {len(arrays[key])} variables from XDMF files for {case}, {timestep}")
+            # Convert 3D XDMF arrays to 2D format expected by statistics code
+            # Format: [index, y_coord, value] matching text file format
+            raw_data = arrays[key]
+            converted_data = {}
+
+            # Get y-coordinates from grid info (node coordinates)
+            y_nodes = grid_info.get('grid_y', None) if grid_info else None
+
+            for var_name, var_array in raw_data.items():
+                if var_array.ndim == 3:
+                    # 3D array (z, y, x) - extract y-profile from averaged data
+                    # For tsp_avg data, values are constant along x and z, so take [0, :, 0]
+                    y_profile = var_array[0, :, 0]
+                    n_points = len(y_profile)
+
+                    # Create 2D array with columns [index, y_coord, value]
+                    converted = np.zeros((n_points, 3))
+                    converted[:, 0] = np.arange(n_points)  # Index
+
+                    # Handle y-coordinates: may need cell centers if data is cell-centered
+                    if y_nodes is not None:
+                        if len(y_nodes) == n_points:
+                            # Node-centered data
+                            converted[:, 1] = y_nodes
+                        elif len(y_nodes) == n_points + 1:
+                            # Cell-centered data - compute cell centers
+                            y_centers = 0.5 * (y_nodes[:-1] + y_nodes[1:])
+                            converted[:, 1] = y_centers
+                        else:
+                            # Fallback to linear spacing
+                            converted[:, 1] = np.linspace(-1, 1, n_points)
+                    else:
+                        converted[:, 1] = np.linspace(-1, 1, n_points)  # Default normalized y
+
+                    converted[:, 2] = y_profile  # Values
+                    converted_data[var_name] = converted
+
+                elif var_array.ndim == 1:
+                    # Already 1D - create 2D format
+                    n_points = len(var_array)
+                    converted = np.zeros((n_points, 3))
+                    converted[:, 0] = np.arange(n_points)
+                    if y_nodes is not None:
+                        if len(y_nodes) == n_points:
+                            converted[:, 1] = y_nodes
+                        elif len(y_nodes) == n_points + 1:
+                            converted[:, 1] = 0.5 * (y_nodes[:-1] + y_nodes[1:])
+                        else:
+                            converted[:, 1] = np.linspace(-1, 1, n_points)
+                    else:
+                        converted[:, 1] = np.linspace(-1, 1, n_points)
+                    converted[:, 2] = var_array
+                    converted_data[var_name] = converted
+                else:
+                    # Keep as-is for other dimensions
+                    converted_data[var_name] = var_array
+
+            self.data[key] = converted_data
+            print(f"Loaded {len(converted_data)} variables from XDMF files for {case}, {timestep}")
         else:
             print(f'No arrays extracted from XDMF files for {case}, {timestep}')
 
@@ -1289,8 +1354,9 @@ class TurbulencePlotter:
             filename = f'{base_name}{suffix}.{ext}' if suffix else self.config.plot_name
         else:
             filename = f'turb_stats_plot{suffix}.png' if suffix else 'turb_stats_plot.png'
-        if self.config.save_to_path:
-            fig.savefig(f'{self.config.folder_path}/{filename}',
+        if self.config.save_to_path and self.config.folder_path:
+            save_path = os.path.join(self.config.folder_path, filename)
+            fig.savefig(save_path,
                         dpi=300,
                         bbox_inches='tight',
                         pad_inches=0.1,
@@ -1298,7 +1364,7 @@ class TurbulencePlotter:
                         edgecolor='none',
                         transparent=True,
                         orientation='landscape')
-            print(f'Figure saved to {self.config.folder_path}/{filename}')
+            print(f'Figure saved to {save_path}')
         fig.savefig(f'turb_stats_plots/{filename}',
                    dpi=300,
                    bbox_inches='tight',
