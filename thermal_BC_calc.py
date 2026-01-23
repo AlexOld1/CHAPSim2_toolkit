@@ -743,12 +743,14 @@ def get_heat_flux(delta_T, k, L_ref):
     heat_flux = k * delta_T / L_ref
     return heat_flux
 
-def calc_fourier_number(k, rho, cp, L, timestep):
+def calc_fourier_number(k, rho, cp, L, timestep, nondim_time=True):
     """
     Calculate Fourier number.
-    
-    Fo = alpha * t / L^2
-    
+
+    For dimensional time:    Fo = alpha * t / L^2
+    For non-dimensional time (U_ref=1): Fo = alpha * t* / L
+        where t_actual = t* * L (since t* = t / L with U_ref = 1 m/s)
+
     Parameters:
     -----------
     k : float
@@ -757,20 +759,26 @@ def calc_fourier_number(k, rho, cp, L, timestep):
         Density in kg/m³
     cp : float
         Specific heat capacity at constant pressure in J/(kg·K)
-    alpha : float
-        Thermal diffusivity in m²/s
     L : float
         Characteristic length in m
-    t : float
-        Time in s
-    
+    timestep : float
+        Time (dimensional in s, or non-dimensional if nondim_time=True)
+    nondim_time : bool
+        If True, timestep is non-dimensional (t* = t/L with U_ref=1 m/s)
+        If False, timestep is dimensional in seconds
+
     Returns:
     --------
     float
         Fourier number (dimensionless)
     """
     alpha = k / (rho * cp)
-    Fo = alpha * timestep / (L**2)
+    if nondim_time:
+        # t_actual = t* * L, so Fo = alpha * t* * L / L^2 = alpha * t* / L
+        Fo = alpha * timestep / L
+    else:
+        # Dimensional time: Fo = alpha * t / L^2
+        Fo = alpha * timestep / (L**2)
     return Fo
 
 def get_prandtl(temp, fluid):
@@ -915,6 +923,17 @@ def interactive_calculation():
         except ValueError:
             print("Invalid input. Please enter a valid number.")
 
+    # Get timestep for Fourier number calculation
+    while True:
+        try:
+            timestep = float(input("Enter timestep (non-dimensional, t* = t/L with U_ref=1): ").strip())
+            if timestep <= 0:
+                print("Timestep must be positive.")
+                continue
+            break
+        except ValueError:
+            print("Invalid input. Please enter a valid number.")
+
     # Calculate properties
     mu = get_viscosity_Pa_s(fluid, T_ref)
     rho = fluid.density_mass(T_ref)
@@ -928,6 +947,10 @@ def interactive_calculation():
     heat_flux = k * delta_T / L_ref
     T_hot = T_ref + delta_T
 
+    # Calculate Fourier number (using non-dimensional time from CHAPSim2)
+    Fo = calc_fourier_number(k, rho, cp, L_ref, timestep, nondim_time=True)
+    alpha = k / (rho * cp)  # thermal diffusivity for display
+
     # Print results
     medium_name = FLUID_NAMES.get(type(fluid), "Unknown Fluid")
 
@@ -939,12 +962,14 @@ def interactive_calculation():
     print(f"  Grashof number:            {grashof:.3e}")
     print(f"  Reference temperature:     {T_ref:.2f} K")
     print(f"  Reference length:          {L_ref:.4f} m")
+    print(f"  Timestep (non-dim):        {timestep:.6e}")
 
     print("\n--- Material Properties at T_ref ---")
     print(f"  Density (rho):             {rho:.2f} kg/m³")
     print(f"  Dynamic viscosity (mu):    {mu:.6e} Pa·s")
     print(f"  Thermal conductivity (k):  {k:.4f} W/(m·K)")
     print(f"  Specific heat (Cp):        {cp:.2f} J/(kg·K)")
+    print(f"  Thermal diffusivity (α):   {alpha:.6e} m²/s")
     print(f"  Vol. expansion (beta):     {beta:.6e} 1/K")
     print(f"  Prandtl number (Pr):       {Pr:.6f}")
 
@@ -952,6 +977,7 @@ def interactive_calculation():
     print(f"  Temperature difference:    {delta_T:.6f} K")
     print(f"  Hot wall temperature:      {T_hot:.2f} K")
     print(f"  Heat flux (q''):           {heat_flux:.4f} W/m²")
+    #print(f"  Fourier number (Fo):       {Fo:.6e}")
 
     print("\n" + "=" * 70 + "\n")
 
@@ -959,8 +985,11 @@ def interactive_calculation():
         'grashof': grashof,
         'T_ref': T_ref,
         'L_ref': L_ref,
+        'timestep': timestep,
         'delta_T': delta_T,
         'heat_flux': heat_flux,
+        'Fo': Fo,
+        'alpha': alpha,
         'Pr': Pr,
         'rho': rho,
         'mu': mu,
