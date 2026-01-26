@@ -59,7 +59,7 @@ print()
 
 # Generate file lists based on number of monitor points
 pt_files = [f'domain1_monitor_pt{i}_flow.dat' for i in range(1, num_monitor_pts + 1)]
-blk_files = ['domain1_monitor_bulk_history.log', 'domain1_monitor_change_history.log']
+blk_files = ['domain1_monitor_metrics_history.log', 'domain1_monitor_change_history.log']
 
 # ====================================================================================================================================================
  
