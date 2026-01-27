@@ -374,11 +374,19 @@ def get_user_input():
     print("=" * 60)
 
     # Get visu folder path (supports tab completion, ~, and $ENV_VARS)
-    print("\nTip: Use Tab for path completion")
+    print("\nTip: Use Tab for path completion, leave empty for current directory")
     case_folder = input("Path to case folder: ").strip()
+    if not case_folder:
+        case_folder = os.getcwd()
     case_folder = os.path.expanduser(os.path.expandvars(case_folder))
-    visu_folder = os.path.join(case_folder, '2_visu')
-    visu_folder = os.path.expanduser(os.path.expandvars(visu_folder))
+
+    # Handle case where user navigated to 2_visu folder
+    if os.path.basename(case_folder) == '2_visu':
+        visu_folder = case_folder
+        case_folder = os.path.dirname(case_folder)
+    else:
+        visu_folder = os.path.join(case_folder, '2_visu')
+
     if not os.path.isdir(visu_folder):
         print(f"Error: Directory not found: {visu_folder}")
         return None
