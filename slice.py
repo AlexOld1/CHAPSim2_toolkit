@@ -201,6 +201,114 @@ def plot_slice(slice_data, coord1, coord2, axis_labels, variable_name,
     return fig
 
 
+def plot_combined_slices(slices_data, coord1, coord2, axis_labels, slice_info,
+                         cmap='viridis', symmetric=False, shared_scale=False,
+                         save_path=None, display=True):
+    """
+    Plot multiple 2D slices in a single figure with subplots.
+
+    Args:
+        slices_data: list of (variable_name, slice_data) tuples
+        coord1, coord2: coordinate arrays for axes
+        axis_labels: tuple of (xlabel, ylabel)
+        slice_info: string describing slice location
+        cmap: colormap name
+        symmetric: if True, use symmetric color scale around zero
+        shared_scale: if True, use same color scale across all subplots
+        save_path: path to save figure (None to skip saving)
+        display: whether to display the figure
+    """
+    import math
+
+    n_vars = len(slices_data)
+    nrows = min(n_vars, 3)
+    ncols = math.ceil(n_vars / nrows)
+
+    fig, axs = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows),
+                            constrained_layout=True)
+
+    # Handle single subplot case
+    if n_vars == 1:
+        axs = np.array([[axs]])
+    elif nrows == 1:
+        axs = axs.reshape(1, -1)
+    elif ncols == 1:
+        axs = axs.reshape(-1, 1)
+
+    # Create cell edges once (same for all variables)
+    if len(coord1) == slices_data[0][1].shape[1]:
+        dx = np.diff(coord1)
+        x_edges = np.concatenate([[coord1[0] - dx[0]/2],
+                                   coord1[:-1] + dx/2,
+                                   [coord1[-1] + dx[-1]/2]])
+    else:
+        x_edges = coord1
+
+    if len(coord2) == slices_data[0][1].shape[0]:
+        dy = np.diff(coord2)
+        y_edges = np.concatenate([[coord2[0] - dy[0]/2],
+                                   coord2[:-1] + dy/2,
+                                   [coord2[-1] + dy[-1]/2]])
+    else:
+        y_edges = coord2
+
+    # Compute shared scale if requested
+    plot_cmap = cmap
+    if shared_scale:
+        all_data = np.concatenate([s[1].flatten() for s in slices_data])
+        if symmetric:
+            global_max = max(abs(np.nanmin(all_data)), abs(np.nanmax(all_data)))
+            global_vmin, global_vmax = -global_max, global_max
+            if cmap == 'viridis':
+                plot_cmap = 'RdBu_r'
+        else:
+            global_vmin = np.nanmin(all_data)
+            global_vmax = np.nanmax(all_data)
+
+    for i, (var_name, slice_data) in enumerate(slices_data):
+        row, col = i // ncols, i % ncols
+        ax = axs[row, col]
+
+        # Handle color scale
+        if shared_scale:
+            vmin, vmax = global_vmin, global_vmax
+        elif symmetric:
+            max_abs = max(abs(np.nanmin(slice_data)), abs(np.nanmax(slice_data)))
+            vmin, vmax = -max_abs, max_abs
+            if cmap == 'viridis':
+                plot_cmap = 'RdBu_r'
+        else:
+            vmin = np.nanmin(slice_data)
+            vmax = np.nanmax(slice_data)
+
+        pcm = ax.pcolormesh(x_edges, y_edges, slice_data,
+                            cmap=plot_cmap, vmin=vmin, vmax=vmax, shading='flat')
+
+        fig.colorbar(pcm, ax=ax, label=var_name)
+        ax.set_xlabel(axis_labels[0])
+        ax.set_ylabel(axis_labels[1])
+        ax.set_title(f'{var_name}')
+        ax.set_aspect('equal', adjustable='box')
+
+    # Hide unused subplots
+    for i in range(n_vars, nrows * ncols):
+        row, col = i // ncols, i % ncols
+        axs[row, col].set_visible(False)
+
+    fig.suptitle(f'2D Slices {slice_info}', fontsize=12)
+
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+
+    if display:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig
+
+
 def get_user_input():
     """Interactively get configuration from user."""
     print("=" * 60)
@@ -276,41 +384,80 @@ def get_user_input():
     }
 
 
+def parse_variable_selection(var_choice, variables):
+    """Parse variable selection string and return list of selected variables."""
+    selected = []
+
+    # Handle 'all' keyword
+    if var_choice.lower() == 'all':
+        return variables[:]
+
+    # Split by comma or space
+    parts = var_choice.replace(',', ' ').split()
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        # Handle range (e.g., 1-5)
+        if '-' in part and part[0] != '-':
+            try:
+                start, end = part.split('-')
+                start_idx = int(start) - 1
+                end_idx = int(end) - 1
+                for i in range(start_idx, end_idx + 1):
+                    if 0 <= i < len(variables) and variables[i] not in selected:
+                        selected.append(variables[i])
+            except ValueError:
+                # Not a valid range, try as variable name
+                if part in variables and part not in selected:
+                    selected.append(part)
+        elif part.isdigit():
+            idx = int(part) - 1
+            if 0 <= idx < len(variables) and variables[idx] not in selected:
+                selected.append(variables[idx])
+        elif part in variables and part not in selected:
+            selected.append(part)
+
+    return selected
+
+
 def get_slice_config(data, grid_info):
     """Get slice configuration from user after data is loaded."""
 
-    # List available variables
-    variables = get_available_variables(data)
-    print(f"\nAvailable variables ({len(variables)}):")
+    # List available variables (only 3D)
+    all_variables = get_available_variables(data)
+    variables = [v for v in all_variables if len(data[v].shape) == 3]
+
+    if not variables:
+        print("Error: No 3D variables found in dataset.")
+        return None
+
+    print(f"\nAvailable 3D variables ({len(variables)}):")
     for i, var in enumerate(variables):
         shape = data[var].shape
         print(f"  {i+1:2d}. {var:20s} shape: {shape}")
 
-    var_choice = input("\nVariable to plot (name or number): ").strip()
+    print("\nSelection options:")
+    print("  - Single e.g: 1 or variable_name")
+    print("  - Multiple e.g: 1,3,5 or 1 3 5")
+    print("  - Range e.g: 1-5")
+    print("  - All: all")
 
-    # Parse variable choice
-    if var_choice.isdigit():
-        idx = int(var_choice) - 1
-        if 0 <= idx < len(variables):
-            variable = variables[idx]
-        else:
-            print("Invalid index, using first variable")
-            variable = variables[0]
-    elif var_choice in variables:
-        variable = var_choice
-    else:
-        print(f"Variable '{var_choice}' not found, using first variable")
-        variable = variables[0]
+    var_choice = input("\nVariables to plot: ").strip()
 
-    # Check if data is 3D
-    var_data = data[variable]
-    if len(var_data.shape) != 3:
-        print(f"Error: Variable '{variable}' is not 3D (shape: {var_data.shape})")
-        print("2D slicing requires 3D data.")
-        return None
+    # Parse variable selection
+    selected_vars = parse_variable_selection(var_choice, variables)
 
-    nz, ny, nx = var_data.shape
-    print(f"\nSelected: {variable} with shape (nz={nz}, ny={ny}, nx={nx})")
+    if not selected_vars:
+        print("No valid variables selected, using first variable")
+        selected_vars = [variables[0]]
+
+    print(f"\nSelected {len(selected_vars)} variable(s): {selected_vars}")
+
+    # Get shape from first variable (all should be same for slicing)
+    nz, ny, nx = data[selected_vars[0]].shape
 
     # Select slice plane
     print("\nSlice planes:")
@@ -382,34 +529,44 @@ def get_slice_config(data, grid_info):
         vmin = float(vmin_input) if vmin_input else None
         vmax = float(vmax_input) if vmax_input else None
 
+    # Combined plot option (only ask if multiple variables selected)
+    combined_plot = False
+    shared_scale = False
+    if len(selected_vars) > 1:
+        combined_input = input("\nCombine all variables in one figure? (y/n) [n]: ").strip().lower()
+        combined_plot = combined_input == 'y'
+
+        if combined_plot:
+            shared_input = input("Use same colour scale for all plots? (y/n) [n]: ").strip().lower()
+            shared_scale = shared_input == 'y'
+
     # Save options
-    save_input = input("\nSave figure? (y/n) [y]: ").strip().lower()
+    save_input = input("\nSave figures? (y/n) [y]: ").strip().lower()
     save_fig = save_input != 'n'
 
-    save_path = None
+    save_dir = None
     if save_fig:
-        default_name = f"{variable}_{plane}_slice.png"
-        save_name = input(f"Filename [{default_name}]: ").strip()
-        if not save_name:
-            save_name = default_name
-        save_path = input(f"Save directory [{os.getcwd()}]: ").strip()
-        if not save_path:
-            save_path = os.getcwd()
-        save_path = os.path.join(os.path.expanduser(os.path.expandvars(save_path)), save_name)
+        save_dir = input(f"Save directory [{os.getcwd()}]: ").strip()
+        if not save_dir:
+            save_dir = os.getcwd()
+        save_dir = os.path.expanduser(os.path.expandvars(save_dir))
 
-    display_input = input("Display figure? (y/n) [y]: ").strip().lower()
+    display_input = input("Display figures? (y/n) [y]: ").strip().lower()
     display = display_input != 'n'
 
     return {
-        'variable': variable,
+        'variables': selected_vars,
         'plane': plane,
         'index': index,
         'cmap': cmap,
         'symmetric': symmetric,
         'vmin': vmin,
         'vmax': vmax,
-        'save_path': save_path,
+        'save_dir': save_dir,
+        'save_fig': save_fig,
         'display': display,
+        'combined_plot': combined_plot,
+        'shared_scale': shared_scale,
     }
 
 
@@ -447,19 +604,10 @@ def main():
         return
 
     print("\n" + "=" * 60)
-    print("Generating slice...")
+    print(f"Generating {len(slice_config['variables'])} slice(s)...")
     print("=" * 60)
 
-    # Extract slice
-    var_data = data[slice_config['variable']]
-    slice_data, coord1, coord2, axis_labels = extract_slice(
-        var_data,
-        slice_config['plane'],
-        slice_config['index'],
-        grid_info
-    )
-
-    # Get slice location info
+    # Get slice location info (same for all variables)
     slice_loc = get_slice_location(grid_info, slice_config['plane'], slice_config['index'])
     if slice_config['plane'] == 'xy':
         slice_info = f"(z = {slice_loc:.4f})" if isinstance(slice_loc, float) else f"(z index = {slice_loc})"
@@ -468,18 +616,68 @@ def main():
     else:
         slice_info = f"(x = {slice_loc:.4f})" if isinstance(slice_loc, float) else f"(x index = {slice_loc})"
 
-    # Plot
-    plot_slice(
-        slice_data, coord1, coord2, axis_labels,
-        slice_config['variable'],
-        cmap=slice_config['cmap'],
-        vmin=slice_config['vmin'],
-        vmax=slice_config['vmax'],
-        symmetric=slice_config['symmetric'],
-        slice_info=slice_info,
-        save_path=slice_config['save_path'],
-        display=slice_config['display']
-    )
+    if slice_config['combined_plot']:
+        # Extract all slices first
+        slices_data = []
+        coord1, coord2, axis_labels = None, None, None
+
+        for variable in tqdm(slice_config['variables'], desc="Extracting", unit="var"):
+            var_data = data[variable]
+            slice_data, coord1, coord2, axis_labels = extract_slice(
+                var_data,
+                slice_config['plane'],
+                slice_config['index'],
+                grid_info
+            )
+            slices_data.append((variable, slice_data))
+
+            # Print statistics
+            print(f"\n{variable}: min={np.nanmin(slice_data):.4e}, max={np.nanmax(slice_data):.4e}, mean={np.nanmean(slice_data):.4e}")
+
+        # Build save path for combined figure
+        save_path = None
+        if slice_config['save_fig'] and slice_config['save_dir']:
+            filename = f"combined_{slice_config['plane']}_slice.png"
+            save_path = os.path.join(slice_config['save_dir'], filename)
+
+        # Plot combined figure
+        plot_combined_slices(
+            slices_data, coord1, coord2, axis_labels, slice_info,
+            cmap=slice_config['cmap'],
+            symmetric=slice_config['symmetric'],
+            shared_scale=slice_config['shared_scale'],
+            save_path=save_path,
+            display=slice_config['display']
+        )
+    else:
+        # Process each variable separately
+        for variable in tqdm(slice_config['variables'], desc="Plotting", unit="var"):
+            var_data = data[variable]
+            slice_data, coord1, coord2, axis_labels = extract_slice(
+                var_data,
+                slice_config['plane'],
+                slice_config['index'],
+                grid_info
+            )
+
+            # Build save path for this variable
+            save_path = None
+            if slice_config['save_fig'] and slice_config['save_dir']:
+                filename = f"{variable}_{slice_config['plane']}_slice.png"
+                save_path = os.path.join(slice_config['save_dir'], filename)
+
+            # Plot
+            plot_slice(
+                slice_data, coord1, coord2, axis_labels,
+                variable,
+                cmap=slice_config['cmap'],
+                vmin=slice_config['vmin'],
+                vmax=slice_config['vmax'],
+                symmetric=slice_config['symmetric'],
+                slice_info=slice_info,
+                save_path=save_path,
+                display=slice_config['display']
+            )
 
     print("\n" + "=" * 60)
     print("Complete!")
