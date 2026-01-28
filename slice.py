@@ -364,7 +364,10 @@ def get_user_input():
     physics_type = physics_map.get(physics_choice, 'flow')
 
     # Check if the selected file exists
-    xdmf_filename = f"domain1_{data_type}_{physics_type}_{timestep}.xdmf"
+    if data_type == 'inst':
+        xdmf_filename = f"domain1_{physics_type}_{timestep}.xdmf"
+    else:
+        xdmf_filename = f"domain1_{data_type}_{physics_type}_{timestep}.xdmf"
     xdmf_path = os.path.join(visu_folder, xdmf_filename)
     if not os.path.isfile(xdmf_path):
         print(f"Error: File not found: {xdmf_filename}")
