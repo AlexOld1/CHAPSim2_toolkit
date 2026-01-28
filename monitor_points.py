@@ -137,7 +137,7 @@ if plt_bulk:
         
         blk_data = blk_data[::sample_factor] # sample data for plotting
 
-        if file == 'domain1_monitor_bulk_history.log':
+        if file == 'domain1_monitor_metrics_history.log':
             time = blk_data[:,0]
             MKE = blk_data[:,1]
             qx = blk_data[:,2]
@@ -183,7 +183,7 @@ if plt_bulk:
             fig.suptitle('Bulk Quantities', fontsize=14)
             fig.tight_layout()
             fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".log","_plot")}.png', dpi=300)
-            print(f'Saved bulk history plot for {file}')
+            print(f'Saved metrics history plot for {file}')
         
         if file == 'domain1_monitor_change_history.log':
             time = blk_data[:,0]

@@ -243,11 +243,36 @@ def get_user_input():
                      '': 'inst'}
     data_type = data_type_map.get(data_type_choice, 'inst')
 
+    # Select physics type
+    print("\nPhysics types:")
+    print("  1. flow   - Flow variables (velocity, pressure, etc.)")
+    print("  2. thermo - Thermal variables (temperature, etc.)")
+    print("  3. mhd    - MHD variables (magnetic field, etc.)")
+    physics_choice = input("Physics type [1]: ").strip()
+
+    physics_map = {'1': 'flow', '2': 'thermo', '3': 'mhd',
+                   'flow': 'flow', 'thermo': 'thermo', 'mhd': 'mhd',
+                   '': 'flow'}
+    physics_type = physics_map.get(physics_choice, 'flow')
+
+    # Check if the selected file exists
+    xdmf_filename = f"domain1_{data_type}_{physics_type}_{timestep}.xdmf"
+    xdmf_path = os.path.join(visu_folder, xdmf_filename)
+    if not os.path.isfile(xdmf_path):
+        print(f"Error: File not found: {xdmf_filename}")
+        print("\nAvailable files:")
+        for f in sorted(os.listdir(visu_folder)):
+            if f.endswith('.xdmf'):
+                print(f"  {f}")
+        return None
+
     return {
         'case_folder': case_folder,
         'visu_folder': visu_folder,
         'timestep': timestep,
         'data_type': data_type,
+        'physics_type': physics_type,
+        'xdmf_path': xdmf_path,
     }
 
 
@@ -397,21 +422,13 @@ def main():
         return
 
     print("\n" + "=" * 60)
-    print("Loading data...")
+    print(f"Loading {config['xdmf_path']}...")
     print("=" * 60)
 
-    # Build file list based on data type
-    file_names = ut.visu_file_paths(
-        config['case_folder'] + '/',
-        '',
-        config['timestep']
-    )
-
-    # Load data using wrapper
-    data, grid_info = ut.xdmf_reader_wrapper(
-        file_names,
-        load_all_vars=True,
-        data_types=[config['data_type']]
+    # Load data from the specific XDMF file
+    data, grid_info = ut.parse_xdmf_file(
+        config['xdmf_path'],
+        load_all_vars=True
     )
 
     if not data:
