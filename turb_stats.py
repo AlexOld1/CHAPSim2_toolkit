@@ -729,28 +729,30 @@ class TKE_Production(TkeBudget):
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Compute Reynolds stress fluctuations
-        u1p_u1p = data_dict['uu11'][:, 2] - np.square(data_dict['u1'][:, 2])
-        u1p_u2p = data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2]
-        u1p_u3p = data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2]
-        u2p_u2p = data_dict['uu22'][:, 2] - np.square(data_dict['u2'][:, 2])
-        u2p_u3p = data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2]
-        u3p_u3p = data_dict['uu33'][:, 2] - np.square(data_dict['u3'][:, 2])
+        # Build dictionary with Reynolds stress fluctuations and velocity gradients
+        tke_comp_dict = {
+            'u1p_u1p': data_dict['uu11'][:, 2] - np.square(data_dict['u1'][:, 2]),
+            'u1p_u2p': data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2],
+            'u1p_u3p': data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2],
+            'u2p_u2p': data_dict['uu22'][:, 2] - np.square(data_dict['u2'][:, 2]),
+            'u2p_u3p': data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2],
+            'u3p_u3p': data_dict['uu33'][:, 2] - np.square(data_dict['u3'][:, 2]),
+            'u2p_u1p': data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2],  # Symmetric
+            'u3p_u1p': data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2],  # Symmetric
+            'u3p_u2p': data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2],  # Symmetric
+            'du1dx': data_dict['du1dx'][:, 2],
+            'du1dy': data_dict['du1dy'][:, 2],
+            'du1dz': data_dict['du1dz'][:, 2],
+            'du2dx': data_dict['du2dx'][:, 2],
+            'du2dy': data_dict['du2dy'][:, 2],
+            'du2dz': data_dict['du2dz'][:, 2],
+            'du3dx': data_dict['du3dx'][:, 2],
+            'du3dy': data_dict['du3dy'][:, 2],
+            'du3dz': data_dict['du3dz'][:, 2],
+        }
 
-        # Production for each velocity component
-        prod_u1 = -1 * (u1p_u1p * data_dict['du1dx'][:, 2] +
-                        u1p_u2p * data_dict['du1dy'][:, 2] +
-                        u1p_u3p * data_dict['du1dz'][:, 2])
-
-        prod_u2 = -1 * (u1p_u2p * data_dict['du2dx'][:, 2] +
-                        u2p_u2p * data_dict['du2dy'][:, 2] +
-                        u2p_u3p * data_dict['du2dz'][:, 2])
-
-        prod_u3 = -1 * (u1p_u3p * data_dict['du3dx'][:, 2] +
-                        u2p_u3p * data_dict['du3dy'][:, 2] +
-                        u3p_u3p * data_dict['du3dz'][:, 2])
-
-        return prod_u1 + prod_u2 + prod_u3
+        result = op.compute_production(tke_comp_dict)
+        return result['prod_total']
 
 
 class TKE_Dissipation(TkeBudget):
@@ -769,10 +771,18 @@ class TKE_Dissipation(TkeBudget):
         self.Re = Re
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Sum of all velocity gradient correlations
-        total_dissipation = (data_dict['dudu11'][:, 2] + data_dict['dudu22'][:, 2] + data_dict['dudu33'][:, 2])
+        # Build dictionary with dissipation correlations
+        tke_comp_dict = {
+            'dudu11': data_dict['dudu11'][:, 2],
+            'dudu12': data_dict['dudu12'][:, 2],
+            'dudu13': data_dict['dudu13'][:, 2],
+            'dudu22': data_dict['dudu22'][:, 2],
+            'dudu23': data_dict['dudu23'][:, 2],
+            'dudu33': data_dict['dudu33'][:, 2],
+        }
 
-        return -(1.0 / self.Re) * total_dissipation
+        result = op.compute_dissipation(self.Re, tke_comp_dict)
+        return result['dissipation']
 
 
 class TKE_Convection(TkeBudget):
@@ -791,11 +801,19 @@ class TKE_Convection(TkeBudget):
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        convection = -(data_dict['u1'][:, 2] * data_dict['dkdx'][:, 2] +
-                       data_dict['u2'][:, 2] * data_dict['dkdy'][:, 2] +
-                       data_dict['u3'][:, 2] * data_dict['dkdz'][:, 2])
+        mean_velocities = {
+            'U1': data_dict['u1'][:, 2],
+            'U2': data_dict['u2'][:, 2],
+            'U3': data_dict['u3'][:, 2],
+        }
+        tke_gradients = {
+            'dkdx': data_dict['dkdx'][:, 2],
+            'dkdy': data_dict['dkdy'][:, 2],
+            'dkdz': data_dict['dkdz'][:, 2],
+        }
 
-        return convection
+        result = op.compute_convection(mean_velocities, tke_gradients)
+        return result['convection']
 
 
 class TKE_ViscousDiffusion(TkeBudget):
@@ -814,11 +832,14 @@ class TKE_ViscousDiffusion(TkeBudget):
         self.Re = Re
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        visc_diff = (1.0 / self.Re) * (data_dict['d2kdx2'][:, 2] +
-                                        data_dict['d2kdy2'][:, 2] +
-                                        data_dict['d2kdz2'][:, 2])
+        tke_second_derivs = {
+            'd2kdx2': data_dict['d2kdx2'][:, 2],
+            'd2kdy2': data_dict['d2kdy2'][:, 2],
+            'd2kdz2': data_dict['d2kdz2'][:, 2],
+        }
 
-        return visc_diff
+        result = op.compute_viscous_diffusion(self.Re, tke_second_derivs)
+        return result['viscous_diffusion']
 
 
 class TKE_PressureTransport(TkeBudget):
@@ -838,12 +859,14 @@ class TKE_PressureTransport(TkeBudget):
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Pressure transport from gradients of pressure-velocity fluctuation correlations
-        press_transport = -(data_dict['d_pu1p_dx'][:, 2] +
-                            data_dict['d_pu2p_dy'][:, 2] +
-                            data_dict['d_pu3p_dz'][:, 2])
+        pressure_velocity_corr_grads = {
+            'd_pu1p_dx': data_dict['d_pu1p_dx'][:, 2],
+            'd_pu2p_dy': data_dict['d_pu2p_dy'][:, 2],
+            'd_pu3p_dz': data_dict['d_pu3p_dz'][:, 2],
+        }
 
-        return press_transport
+        result = op.compute_pressure_transport(pressure_velocity_corr_grads)
+        return result['pressure_transport']
 
 
 class TKE_TurbulentDiffusion(TkeBudget):
@@ -862,11 +885,14 @@ class TKE_TurbulentDiffusion(TkeBudget):
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        turb_diff = -0.5 * (data_dict['d_uiuiu1_dx'][:, 2] +
-                            data_dict['d_uiuiu2_dy'][:, 2] +
-                            data_dict['d_uiuiu3_dz'][:, 2])
+        triple_corr_grads = {
+            'd_uiuiu1_dx': data_dict['d_uiuiu1_dx'][:, 2],
+            'd_uiuiu2_dy': data_dict['d_uiuiu2_dy'][:, 2],
+            'd_uiuiu3_dz': data_dict['d_uiuiu3_dz'][:, 2],
+        }
 
-        return turb_diff
+        result = op.compute_turbulent_diffusion(triple_corr_grads)
+        return result['turbulent_diffusion']
 
 
 # Placeholder classes for future implementation
