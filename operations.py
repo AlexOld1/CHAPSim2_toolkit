@@ -45,6 +45,157 @@ def compute_shear_stress(ux, uy, uv):
 def compute_tke(u_prime_sq, v_prime_sq, w_prime_sq):
     return 0.5 * (u_prime_sq + v_prime_sq + w_prime_sq)
 
+# Functions for computing gradient terms from t_avg data
+
+def _extract_profile_cols(arr_2d):
+    """Extract y and value columns from a [index, y, value] array."""
+    if arr_2d is None:
+        return None, None
+    return arr_2d[:, 1], arr_2d[:, 2]
+
+def compute_velocity_gradients(data_dict):
+    """
+    Compute 1D velocity gradients (∂U/∂y) from t_avg mean velocity profiles.
+    
+    For fully developed channel flow:
+    - Flow is statistically homogeneous in x (streamwise) and z (spanwise): ∂⟨⟩/∂x = ∂⟨⟩/∂z = 0
+    - Mean velocities: U₁(y), U₂ = 0, U₃ = 0
+    - Therefore: ∂U₁/∂y is the only non-zero mean velocity gradient
+    - All cross-stream gradients (∂U₂/∂y, ∂U₃/∂y) are computed but typically ~0 in fully developed flow
+
+    Args:
+        data_dict: Dictionary with 'u1', 'u2', 'u3' (from t_avg data, [index, y, value] format)
+
+    Returns:
+        Dictionary with 'du1dy', 'du2dy', 'du3dy' in [index, y, value] format
+    """
+    result = {}
+
+    for comp in ['u1', 'u2', 'u3']:
+        arr = data_dict.get(comp)
+        if arr is not None:
+            y, u = _extract_profile_cols(arr)
+            dudy = np.gradient(u, y)
+            # Return in [index, y, value] format
+            result[f'd{comp}dy'] = np.column_stack([arr[:, 0], y, dudy])
+
+    return result
+
+def compute_tke_gradients(data_dict):
+    """
+    Compute TKE and its gradients from t_avg Reynolds stress profiles.
+    
+    For channel flow (homogeneous in x and z):
+    - ∂k/∂x = 0, ∂k/∂z = 0 (homogeneity)
+    - Only ∂k/∂y and ∂²k/∂y² are non-zero
+
+    Args:
+        data_dict: Dictionary with 'u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33'
+
+    Returns:
+        Dictionary with 'dkdy', 'd2kdy2' in [index, y, value] format
+    """
+    y, u1 = _extract_profile_cols(data_dict.get('u1'))
+    _, u2 = _extract_profile_cols(data_dict.get('u2'))
+    _, u3 = _extract_profile_cols(data_dict.get('u3'))
+    _, uu11 = _extract_profile_cols(data_dict.get('uu11'))
+    _, uu22 = _extract_profile_cols(data_dict.get('uu22'))
+    _, uu33 = _extract_profile_cols(data_dict.get('uu33'))
+
+    if any(x is None for x in [y, u1, u2, u3, uu11, uu22, uu33]):
+        raise ValueError("Missing required fields for TKE gradient computation")
+
+    # Compute TKE
+    k = 0.5 * ((uu11 - u1**2) + (uu22 - u2**2) + (uu33 - u3**2))
+    dkdy = np.gradient(k, y)
+    d2kdy2 = np.gradient(dkdy, y)
+
+    # Return in [index, y, value] format
+    index = data_dict['u1'][:, 0]
+    return {
+        'dkdy': np.column_stack([index, y, dkdy]),
+        'd2kdy2': np.column_stack([index, y, d2kdy2]),
+    }
+
+def compute_pressure_gradient(data_dict):
+    """
+    Compute pressure-velocity gradient ∂⟨p'u'₂⟩/∂y from t_avg data.
+
+    Args:
+        data_dict: Dictionary with 'pr', 'u2', 'pru2'
+
+    Returns:
+        Dictionary with 'd_pu2p_dy' in [index, y, value] format, or empty if data missing
+    """
+    arr_u2 = data_dict.get('u2')
+    arr_pr = data_dict.get('pr')
+    arr_pru2 = data_dict.get('pru2')
+
+    if arr_u2 is None or arr_pr is None or arr_pru2 is None:
+        return {}
+
+    y, u2 = _extract_profile_cols(arr_u2)
+    _, pr = _extract_profile_cols(arr_pr)
+    _, pru2 = _extract_profile_cols(arr_pru2)
+
+    # Compute pressure-velocity fluctuation correlation
+    pu2p = pru2 - pr * u2
+    d_pu2p_dy = np.gradient(pu2p, y)
+
+    index = arr_u2[:, 0]
+    return {'d_pu2p_dy': np.column_stack([index, y, d_pu2p_dy])}
+
+def compute_triple_correlation_gradient(data_dict):
+    """
+    Compute gradient of triple correlation ∂⟨u'ᵢu'ᵢu'₂⟩/∂y from t_avg data.
+
+    Args:
+        data_dict: Dictionary with 'u1', 'u2', 'u3', 'uu11', 'uu12', 'uu22', 'uu23', 'uu33'
+                   and 'uuu112', 'uuu222', 'uuu233'
+
+    Returns:
+        Dictionary with 'd_uiuiu2_dy' in [index, y, value] format, or empty if data missing
+    """
+    arr_u1 = data_dict.get('u1')
+    arr_u2 = data_dict.get('u2')
+    arr_u3 = data_dict.get('u3')
+    arr_uu11 = data_dict.get('uu11')
+    arr_uu12 = data_dict.get('uu12')
+    arr_uu22 = data_dict.get('uu22')
+    arr_uu23 = data_dict.get('uu23')
+    arr_uu33 = data_dict.get('uu33')
+    arr_uuu112 = data_dict.get('uuu112')
+    arr_uuu222 = data_dict.get('uuu222')
+    arr_uuu233 = data_dict.get('uuu233')
+
+    if any(x is None for x in [arr_u1, arr_u2, arr_u3, arr_uu11, arr_uu12, arr_uu22, arr_uu23, arr_uu33,
+                                arr_uuu112, arr_uuu222, arr_uuu233]):
+        return {}
+
+    y, u1 = _extract_profile_cols(arr_u1)
+    _, u2 = _extract_profile_cols(arr_u2)
+    _, u3 = _extract_profile_cols(arr_u3)
+    _, uu11 = _extract_profile_cols(arr_uu11)
+    _, uu12 = _extract_profile_cols(arr_uu12)
+    _, uu22 = _extract_profile_cols(arr_uu22)
+    _, uu23 = _extract_profile_cols(arr_uu23)
+    _, uu33 = _extract_profile_cols(arr_uu33)
+    _, uuu112 = _extract_profile_cols(arr_uuu112)
+    _, uuu222 = _extract_profile_cols(arr_uuu222)
+    _, uuu233 = _extract_profile_cols(arr_uuu233)
+
+    # Compute fluctuating triple correlations ⟨u'ᵢu'ᵢu'₂⟩
+    u1pu1pu2p = uuu112 - uu11 * u2 - 2 * uu12 * u1 + 2 * (u1**2) * u2
+    u2pu2pu2p = uuu222 - 3 * uu22 * u2 + 2 * (u2**3)
+    u3pu3pu2p = uuu233 - uu33 * u2 - 2 * uu23 * u3 + 2 * (u3**2) * u2
+
+    # Sum to get ⟨u'ᵢu'ᵢu'₂⟩
+    uiuiu2p = u1pu1pu2p + u2pu2pu2p + u3pu3pu2p
+    d_uiuiu2p_dy = np.gradient(uiuiu2p, y)
+
+    index = arr_u1[:, 0]
+    return {'d_uiuiu2_dy': np.column_stack([index, y, d_uiuiu2p_dy])}
+
 # TKE Budget terms functions
 def compute_TKE_components(xdmf_data_dict):
     """

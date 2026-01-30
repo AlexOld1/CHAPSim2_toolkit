@@ -222,9 +222,27 @@ def create_data_loader(config: Config, data_types: List[str] = None):
     fmt = config.input_format.lower()
 
     if fmt in ['xdmf', 'visu']:
-        # Default to tsp_avg for turb_stats which only needs time-space averaged data
+        # Determine which data types to load based on enabled features
+        tke_budget_enabled = (config.tke_budget_on or config.tke_production_on or 
+                              config.tke_dissipation_on or config.tke_convection_on or 
+                              config.tke_viscous_diffusion_on or config.tke_pressure_transport_on or 
+                              config.tke_turbulent_diffusion_on)
+        
         if data_types is None:
-            data_types = ['tsp_avg']
+            if tke_budget_enabled:
+                # For TKE budget, we need t_avg (for gradients) and tsp_avg (for dissipation dudu terms)
+                # Load both to ensure all data is available
+                data_types = ['t_avg', 'tsp_avg']
+            else:
+                # For regular statistics only, use tsp_avg
+                data_types = ['tsp_avg']
+        elif tke_budget_enabled:
+            # Ensure both t_avg and tsp_avg are loaded when TKE budget is enabled
+            data_types = list(data_types)
+            if 't_avg' not in data_types:
+                data_types.append('t_avg')
+            if 'tsp_avg' not in data_types:
+                data_types.append('tsp_avg')
         print(f"Using XDMF data loader with data_types={data_types}...")
         return TurbulenceXDMFData(
             config.folder_path,
@@ -716,41 +734,47 @@ class TKE_Production(TkeBudget):
     """
     TKE Production term: P = -⟨u'ᵢu'ⱼ⟩ ∂Uᵢ/∂xⱼ
 
-    For channel flow (homogeneous in x and z), simplifies to:
-    P = -⟨u'v'⟩ ∂U/∂y
+    For fully developed channel flow:
+    - Homogeneity: ∂Uᵢ/∂x = ∂Uᵢ/∂z = 0
+    - Mean velocities: U₁ = U(y), U₂ = 0, U₃ = 0 → only ∂U₁/∂y is non-zero
+    - Dominant term: P ≈ -⟨u'v'⟩ ∂U/∂y
+    - Full expression with all terms computed for numerical accuracy
     """
 
     def __init__(self):
         super().__init__(
             'production',
             'Production',
-            ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu13', 'uu22', 'uu23', 'uu33',
-             'du1dx', 'du1dy', 'du1dz', 'du2dx', 'du2dy', 'du2dz', 'du3dx', 'du3dy', 'du3dz']
+            ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu13', 'uu22', 'uu23', 'uu33']
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Build dictionary with Reynolds stress fluctuations and velocity gradients
+        # Compute velocity gradients from t_avg data
+        grad_dict = op.compute_velocity_gradients(data_dict)
+        data_dict.update(grad_dict)
+
+        # Build Reynolds stress dictionary for existing compute_production function
         tke_comp_dict = {
             'u1p_u1p': data_dict['uu11'][:, 2] - np.square(data_dict['u1'][:, 2]),
             'u1p_u2p': data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2],
             'u1p_u3p': data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2],
+            'u2p_u1p': data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2],
             'u2p_u2p': data_dict['uu22'][:, 2] - np.square(data_dict['u2'][:, 2]),
             'u2p_u3p': data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2],
+            'u3p_u1p': data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2],
+            'u3p_u2p': data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2],
             'u3p_u3p': data_dict['uu33'][:, 2] - np.square(data_dict['u3'][:, 2]),
-            'u2p_u1p': data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2],  # Symmetric
-            'u3p_u1p': data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2],  # Symmetric
-            'u3p_u2p': data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2],  # Symmetric
-            'du1dx': data_dict['du1dx'][:, 2],
+            # Channel flow: homogeneous in x and z, so ∂/∂x = ∂/∂z = 0
+            'du1dx': np.zeros_like(data_dict['u1'][:, 2]),
             'du1dy': data_dict['du1dy'][:, 2],
-            'du1dz': data_dict['du1dz'][:, 2],
-            'du2dx': data_dict['du2dx'][:, 2],
+            'du1dz': np.zeros_like(data_dict['u1'][:, 2]),
+            'du2dx': np.zeros_like(data_dict['u1'][:, 2]),
             'du2dy': data_dict['du2dy'][:, 2],
-            'du2dz': data_dict['du2dz'][:, 2],
-            'du3dx': data_dict['du3dx'][:, 2],
+            'du2dz': np.zeros_like(data_dict['u1'][:, 2]),
+            'du3dx': np.zeros_like(data_dict['u1'][:, 2]),
             'du3dy': data_dict['du3dy'][:, 2],
-            'du3dz': data_dict['du3dz'][:, 2],
+            'du3dz': np.zeros_like(data_dict['u1'][:, 2]),
         }
-
         result = op.compute_production(tke_comp_dict)
         return result['prod_total']
 
@@ -790,28 +814,38 @@ class TKE_Convection(TkeBudget):
     TKE Convection (Advection) term: C = -Uⱼ ∂k/∂xⱼ
 
     Represents the transport of TKE by the mean flow.
-    For channel flow (homogeneous in x and z), simplifies to: C = -V ∂k/∂y
+    
+    For fully developed channel flow:
+    - Homogeneity: ∂k/∂x = ∂k/∂z = 0
+    - Mean velocities: U₁ = U(y), U₂ = 0, U₃ = 0
+    - Therefore: C = -U₁·0 - U₂·∂k/∂y - U₃·0 = 0 (since U₂ = 0)
+    
+    Note: We compute -U₂∂k/∂y anyway to account for small numerical deviations from U₂ = 0
     """
 
     def __init__(self):
         super().__init__(
             'convection',
             'Convection',
-            ['u1', 'u2', 'u3', 'dkdx', 'dkdy', 'dkdz']
+            ['u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33']
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
+        # Compute TKE gradients from t_avg data
+        grad_dict = op.compute_tke_gradients(data_dict)
+        data_dict.update(grad_dict)
+
+        # Build gradient dictionary for existing compute_convection function
         mean_velocities = {
             'U1': data_dict['u1'][:, 2],
             'U2': data_dict['u2'][:, 2],
             'U3': data_dict['u3'][:, 2],
         }
         tke_gradients = {
-            'dkdx': data_dict['dkdx'][:, 2],
-            'dkdy': data_dict['dkdy'][:, 2],
-            'dkdz': data_dict['dkdz'][:, 2],
+            'dkdx': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in x
+            'dkdy': data_dict['dkdy'][:, 2],                # Only y-gradient is non-zero
+            'dkdz': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in z
         }
-
         result = op.compute_convection(mean_velocities, tke_gradients)
         return result['convection']
 
@@ -827,17 +861,21 @@ class TKE_ViscousDiffusion(TkeBudget):
         super().__init__(
             'viscous_diffusion',
             'Viscous Diffusion',
-            ['d2kdx2', 'd2kdy2', 'd2kdz2']
+            ['u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33']
         )
         self.Re = Re
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        tke_second_derivs = {
-            'd2kdx2': data_dict['d2kdx2'][:, 2],
-            'd2kdy2': data_dict['d2kdy2'][:, 2],
-            'd2kdz2': data_dict['d2kdz2'][:, 2],
-        }
+        # Compute TKE gradients from t_avg data
+        grad_dict = op.compute_tke_gradients(data_dict)
+        data_dict.update(grad_dict)
 
+        # Build second derivative dictionary for existing compute_viscous_diffusion function
+        tke_second_derivs = {
+            'd2kdx2': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in x
+            'd2kdy2': data_dict['d2kdy2'][:, 2],              # Only y-derivative is non-zero
+            'd2kdz2': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in z
+        }
         result = op.compute_viscous_diffusion(self.Re, tke_second_derivs)
         return result['viscous_diffusion']
 
@@ -848,23 +886,29 @@ class TKE_PressureTransport(TkeBudget):
 
     Represents the redistribution of TKE by pressure fluctuations.
     Also called pressure diffusion or velocity-pressure gradient correlation.
+    For channel flow: PT = -∂⟨p'v'⟩/∂y (computed from t_avg)
     """
 
     def __init__(self):
         super().__init__(
             'pressure_transport',
             'Pressure Transport',
-            ['pr', 'u1', 'u2', 'u3', 'pru1', 'pru2', 'pru3',
-             'd_pu1p_dx', 'd_pu2p_dy', 'd_pu3p_dz']
+            ['pr', 'u2', 'pru2']
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        pressure_velocity_corr_grads = {
-            'd_pu1p_dx': data_dict['d_pu1p_dx'][:, 2],
-            'd_pu2p_dy': data_dict['d_pu2p_dy'][:, 2],
-            'd_pu3p_dz': data_dict['d_pu3p_dz'][:, 2],
-        }
+        # Compute pressure gradient from t_avg data
+        grad_dict = op.compute_pressure_gradient(data_dict)
+        if not grad_dict:
+            return np.zeros_like(data_dict['u2'][:, 2])
+        data_dict.update(grad_dict)
 
+        # Build gradient dictionary for existing compute_pressure_transport function
+        pressure_velocity_corr_grads = {
+            'd_pu1p_dx': np.zeros_like(data_dict['u2'][:, 2]),  # Channel: homogeneous in x
+            'd_pu2p_dy': data_dict['d_pu2p_dy'][:, 2],          # Only y-derivative is non-zero
+            'd_pu3p_dz': np.zeros_like(data_dict['u2'][:, 2]),  # Channel: homogeneous in z
+        }
         result = op.compute_pressure_transport(pressure_velocity_corr_grads)
         return result['pressure_transport']
 
@@ -881,16 +925,23 @@ class TKE_TurbulentDiffusion(TkeBudget):
         super().__init__(
             'turbulent_diffusion',
             'Turbulent Diffusion',
-            ['d_uiuiu1_dx', 'd_uiuiu2_dy', 'd_uiuiu3_dz']
+            ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu22', 'uu23', 'uu33',
+             'uuu112', 'uuu222', 'uuu233']
         )
 
     def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        triple_corr_grads = {
-            'd_uiuiu1_dx': data_dict['d_uiuiu1_dx'][:, 2],
-            'd_uiuiu2_dy': data_dict['d_uiuiu2_dy'][:, 2],
-            'd_uiuiu3_dz': data_dict['d_uiuiu3_dz'][:, 2],
-        }
+        # Compute triple correlation gradient from t_avg data
+        grad_dict = op.compute_triple_correlation_gradient(data_dict)
+        if not grad_dict:
+            return np.zeros_like(data_dict['u1'][:, 2])
+        data_dict.update(grad_dict)
 
+        # Build gradient dictionary for existing compute_turbulent_diffusion function
+        triple_corr_grads = {
+            'd_uiuiu1_dx': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in x
+            'd_uiuiu2_dy': data_dict['d_uiuiu2_dy'][:, 2],        # Only y-derivative is non-zero
+            'd_uiuiu3_dz': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in z
+        }
         result = op.compute_turbulent_diffusion(triple_corr_grads)
         return result['turbulent_diffusion']
 

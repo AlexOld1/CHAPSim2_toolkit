@@ -20,6 +20,9 @@ _BASE_REQUIRED_VARS = [
     'u1', 'u2', 'u3', 'ux', 'uy', 'uz', 'qx_ccc', 'qy_ccc', 'qz_ccc',
     # Reynolds stresses
     'uu11', 'uu12', 'uu13', 'uu22', 'uu23', 'uu33', 'uu', 'uv', 'vv', 'ww', 'uxux', 'uxuy', 'uyuy', 'uzuz',
+    # Triple correlations
+    'uuu111', 'uuu112', 'uuu113', 'uuu122', 'uuu123', 'uuu133',
+    'uuu222', 'uuu223', 'uuu233', 'uuu333',
     # Velocity gradients
     'du1dx', 'du1dy', 'du1dz', 'du2dx', 'du2dy', 'du2dz', 'du3dx', 'du3dy', 'du3dz',
     # Dissipation terms
@@ -331,6 +334,11 @@ def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None
         existing_files = filtered_files
         if data_types:
             tqdm.write(f"Filtering for data types: {data_types}")
+
+    # If both t_avg and tsp_avg are requested, process tsp_avg first and t_avg last
+    # so t_avg values take precedence when prefixes are stripped.
+    if data_types is not None and 't_avg' in data_types and 'tsp_avg' in data_types:
+        existing_files.sort(key=lambda f: 1 if 't_avg_' in os.path.basename(f) else 0)
 
     for xdmf_file in tqdm(existing_files, desc="Processing XDMF files", unit="file"):
         try:
