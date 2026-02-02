@@ -103,6 +103,38 @@ def extract_slice(data_3d, plane, index, grid_info):
     return slice_data, coord1, coord2, axis_labels
 
 
+def apply_x_crop(slice_data, coord1, x_crop):
+    """
+    Apply x-direction cropping to slice data.
+
+    Args:
+        slice_data: 2D numpy array
+        coord1: x-coordinates array
+        x_crop: tuple of (x_min, x_max) or None
+
+    Returns:
+        cropped_data: cropped 2D array
+        cropped_coord1: cropped x-coordinates
+    """
+    if x_crop is None:
+        return slice_data, coord1
+
+    x_min, x_max = x_crop
+    # Find indices within the crop range
+    mask = (coord1 >= x_min) & (coord1 <= x_max)
+    indices = np.where(mask)[0]
+
+    if len(indices) == 0:
+        print(f"Warning: No data points in x range [{x_min}, {x_max}]")
+        return slice_data, coord1
+
+    i_start, i_end = indices[0], indices[-1] + 1
+    cropped_coord1 = coord1[i_start:i_end]
+    cropped_data = slice_data[:, i_start:i_end]
+
+    return cropped_data, cropped_coord1
+
+
 def get_slice_location(grid_info, plane, index):
     """Get the physical location of the slice."""
     if plane == 'xy':
@@ -190,7 +222,7 @@ def plot_slice(slice_data, coord1, coord2, axis_labels, variable_name,
     print(f"  Mean: {np.nanmean(slice_data):.6e}")
 
     if save_path:
-        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        fig.savefig(save_path, dpi=600, bbox_inches='tight')
         print(f"Saved: {save_path}")
 
     if display:
@@ -508,6 +540,22 @@ def get_slice_config(data, grid_info):
 
     index = max(0, min(index, max_idx))
 
+    # X-direction cropping (optional, only for xy and xz planes)
+    x_crop = None
+    if plane in ['xy', 'xz']:
+        grid_x = grid_info.get('grid_x', None)
+        if grid_x is not None:
+            print(f"\nX-direction cropping (optional):")
+            print(f"  Full x range: {grid_x.min():.4f} to {grid_x.max():.4f}")
+            crop_input = input("Crop x range? (y/n) [n]: ").strip().lower()
+            if crop_input == 'y':
+                x_min_input = input(f"  x_min [{grid_x.min():.4f}]: ").strip()
+                x_max_input = input(f"  x_max [{grid_x.max():.4f}]: ").strip()
+                x_min = float(x_min_input) if x_min_input else grid_x.min()
+                x_max = float(x_max_input) if x_max_input else grid_x.max()
+                x_crop = (x_min, x_max)
+                print(f"  -> Cropping x from {x_min:.4f} to {x_max:.4f}")
+
     # Colormap selection
     print("\nColormaps: viridis, plasma, inferno, magma, cividis, RdBu_r, coolwarm, jet")
     cmap = input("Colormap [viridis]: ").strip()
@@ -570,6 +618,7 @@ def get_slice_config(data, grid_info):
         'display': display,
         'combined_plot': combined_plot,
         'shared_scale': shared_scale,
+        'x_crop': x_crop,
     }
 
 
@@ -632,6 +681,12 @@ def main():
                 slice_config['index'],
                 grid_info
             )
+
+            # Apply x-direction cropping if specified (only for xy and xz planes)
+            if slice_config['x_crop'] is not None and slice_config['plane'] in ['xy', 'xz']:
+                slice_data, coord1_cropped = apply_x_crop(slice_data, coord1, slice_config['x_crop'])
+                coord1 = coord1_cropped
+
             slices_data.append((variable, slice_data))
 
             # Print statistics
@@ -662,6 +717,10 @@ def main():
                 slice_config['index'],
                 grid_info
             )
+
+            # Apply x-direction cropping if specified (only for xy and xz planes)
+            if slice_config['x_crop'] is not None and slice_config['plane'] in ['xy', 'xz']:
+                slice_data, coord1 = apply_x_crop(slice_data, coord1, slice_config['x_crop'])
 
             # Build save path for this variable
             save_path = None
