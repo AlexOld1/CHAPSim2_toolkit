@@ -167,8 +167,7 @@ def read_binary_data_item(data_item, xdmf_dir):
         print(f"Error reading {bin_path}: {e}")
         return None
 
-
-def parse_xdmf_file(xdmf_path, load_all_vars=None, sample_stride=1):
+def parse_xdmf_file(xdmf_path, load_all_vars=None, output_dim=1):
     """
     Parse XDMF file and extract data from associated binary files.
 
@@ -176,7 +175,7 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, sample_stride=1):
         xdmf_path: Path to the XDMF file
         load_all_vars: If True, load all variables. If False, only load required ones.
                        If None, uses module-level LOAD_ALL_VARS setting.
-        sample_stride: Stride for sampling in x and z directions (1 = no sampling)
+        output_dim: Desired output dimension (1, 2, or 3)
 
     Returns:
         tuple: (arrays dict, grid_info dict)
@@ -243,12 +242,13 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, sample_stride=1):
 
         xdmf_name = os.path.basename(xdmf_path)
         for task_type, name, data_item in tqdm(read_tasks, desc=f"  Reading {xdmf_name}", unit="var", leave=False):
-            data = read_binary_data_item(data_item, xdmf_dir)
-            if data is not None:
-                # Apply sampling in x and z directions if enabled (dims are typically z, y, x)
-                if sample_stride > 1 and len(data.shape) == 3:
-                    data = data[::sample_stride, :, ::sample_stride]
-
+            data_3d = read_binary_data_item(data_item, xdmf_dir)
+            if data_3d is not None:
+                if output_dim == 1 and len(data_3d.shape) == 3:
+                    data = data_3d[data_3d.shape[0]//2, :, data_3d.shape[2]//2].copy()
+                    del data_3d
+                else:
+                    data = data_3d
                 if task_type == 'grid':
                     grid_info[name] = data
                 else:
@@ -257,7 +257,7 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, sample_stride=1):
     return arrays, grid_info
 
 
-def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None, sample_stride=1, data_types=None):
+def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None, data_types=None):
     """
     Reads XDMF files and extracts numpy arrays from binary data.
 
@@ -266,7 +266,6 @@ def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None
         case (str, optional): Case identifier for dictionary key
         timestep (str, optional): Timestep identifier for dictionary key
         load_all_vars (bool, optional): If True, load all variables. If False, only required ones.
-        sample_stride (int): Stride for sampling in x and z directions (1 = no sampling)
         data_types (list, optional): List of data types to load. If None, loads all files.
             Valid types: 'inst', 't_avg', 'tsp_avg',
             or specific combinations like 't_avg_flow', 'tsp_avg_thermo', etc.
@@ -345,7 +344,8 @@ def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None
             tqdm.write(f"Opening file: {xdmf_file}")
 
             # Parse the XDMF file
-            arrays, file_grid_info = parse_xdmf_file(xdmf_file, load_all_vars=load_all_vars, sample_stride=sample_stride)
+
+            arrays, file_grid_info = parse_xdmf_file(xdmf_file, load_all_vars=load_all_vars, output_dim=1 if 'tsp_avg' in xdmf_file else 3)
 
             if arrays:
                 # Extract file type from filename for prefixing (optional)

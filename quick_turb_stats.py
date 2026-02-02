@@ -40,7 +40,7 @@ except ImportError:
     pass  # readline not available on all platforms
 
 
-def load_xdmf_data(visu_folder, timestep, sample_stride=1):
+def load_xdmf_data(visu_folder, timestep):
     """
     Load all available XDMF data from the 2_visu folder.
     Prioritises tsp_avg (time-space averaged) files, falls back to t_avg (time averaged) if not found.
@@ -93,10 +93,7 @@ def load_xdmf_data(visu_folder, timestep, sample_stride=1):
             pbar.set_postfix_str(pattern[:30])
 
             # Use the shared XDMF reader from utils
-            # For tsp_avg data, don't apply sampling (already 1D)
-            # For t_avg data, apply sampling in x/z
-            stride = 1 if is_space_averaged else sample_stride
-            arrays, file_grid_info = ut.parse_xdmf_file(filepath, load_all_vars=False, sample_stride=stride)
+            arrays, file_grid_info = ut.parse_xdmf_file(filepath, load_all_vars=False, output_dim=1 if 'tsp_avg' in filepath else 3)
 
             # Store grid info from first file that has it
             if not grid_info and file_grid_info:
@@ -105,7 +102,7 @@ def load_xdmf_data(visu_folder, timestep, sample_stride=1):
             all_data.update(arrays)
             pbar.update(1)
 
-    return all_data, grid_info, is_space_averaged
+    return all_data, grid_info
 
 
 def extract_y_profile(data_3d, grid_info):
@@ -426,15 +423,6 @@ def get_user_input():
     re_input = input("Reynolds number (bulk) [5000]: ").strip()
     Re = float(re_input) if re_input else 5000.0
 
-    # Sampling option for faster loading
-    print("\nSampling reduces data in x/z directions (y kept full for profiles)")
-    print("  1 = full data, 2 = 1/4 data, 4 = 1/16 data, 8 = 1/64 data")
-    print("  Recommended: 4-8 for quick preview, 1-2 for final results")
-    sample_input = input("Sample stride [4]: ").strip()
-    sample_stride = int(sample_input) if sample_input else 4
-    if sample_stride < 1:
-        sample_stride = 1
-
     # Half channel plot
     half_input = input("Plot half channel? (y/n) [n]: ").strip().lower()
     half_channel = half_input == 'y'
@@ -455,7 +443,6 @@ def get_user_input():
         'forcing': forcing,
         'Re': Re,
         'ref_temp': ref_temp,
-        'sample_stride': sample_stride,
         'half_channel': half_channel,
         'save_fig': save_fig,
         'display_fig': display_fig,
@@ -477,15 +464,9 @@ def main():
     # Check if tsp_avg files exist to determine if we need sampling
     visu_folder = config['visu_folder']
     timestep = config['timestep']
-    tsp_avg_exists = os.path.isfile(os.path.join(visu_folder, f'domain1_tsp_avg_flow_{timestep}.xdmf'))
-
-    # Only apply sampling for t_avg (3D) data, not tsp_avg (already 1D)
-    sample_stride = 1 if tsp_avg_exists else config['sample_stride']
-    if sample_stride > 1:
-        print(f"(Sampling every {sample_stride} points in x/z for spatial averaging)")
 
     # Load XDMF data
-    data, grid_info, is_space_averaged = load_xdmf_data(visu_folder, timestep, sample_stride)
+    data, grid_info = load_xdmf_data(visu_folder, timestep)
 
     if not data:
         print("Error: No data loaded. Check file paths.")
