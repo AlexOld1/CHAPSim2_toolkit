@@ -222,7 +222,7 @@ def plot_slice(slice_data, coord1, coord2, axis_labels, variable_name,
     print(f"  Mean: {np.nanmean(slice_data):.6e}")
 
     if save_path:
-        fig.savefig(save_path, dpi=600, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1000, bbox_inches='tight')
         print(f"Saved: {save_path}")
 
     if display:
@@ -330,7 +330,7 @@ def plot_combined_slices(slices_data, coord1, coord2, axis_labels, slice_info,
     fig.suptitle(f'2D Slices {slice_info}', fontsize=12)
 
     if save_path:
-        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1000, bbox_inches='tight')
         print(f"Saved: {save_path}")
 
     if display:
