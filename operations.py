@@ -200,27 +200,28 @@ def compute_triple_correlation_gradient(data_dict):
 def compute_TKE_components(xdmf_data_dict):
     """
     Compute TKE budget term components from XDMF time-space averaged data.
-
-    This function extracts all available data from XDMF files and computes:
-    - Reynolds stresses
-    - Pressure-velocity correlations
-    - Triple velocity correlations
-    - Dissipation terms
-    - TKE and derived quantities
+    Naming convention: 1,2,3 are x,y,z. 'p' denotes fluctuating component (pr used for pressure).
 
     Args:
-        xdmf_data_dict: Dictionary containing XDMF data with keys like 'tsp_avg_flow_cell_u1', etc.
+        xdmf_data_dict: Dictionary containing XDMF data
 
     Returns:
         dict: Dictionary containing all TKE budget components
     """
     # Helper function to safely extract XDMF variables
-    def get_var(name_pattern):
+    def get_var(name_pattern, data_type='tsp_avg'):
         """Extract variable, trying different prefixes"""
-        for prefix in ['tsp_avg_flow_cell_tsp_avg_', 'time_avg_cell_tsp_avg_', 'flow_cell_tsp_avg_']:
-            key = f"{prefix}{name_pattern}"
-            if key in xdmf_data_dict:
-                return xdmf_data_dict[key]
+        if data_type == 'tsp_avg':
+            for prefix in ['tsp_avg_flow', 'tsp_avg_thermo',
+                        'tsp_avg_mhd']:
+                key = f"{prefix}{name_pattern}"
+                if key in xdmf_data_dict:
+                    return xdmf_data_dict[key]
+        if data_type == 't_avg':
+            for prefix in ['t_avg_flow', 't_avg_thermo', 't_avg_mhd']:
+                key = f"{prefix}{name_pattern}"
+                if key in xdmf_data_dict:
+                    return xdmf_data_dict[key]
         # Fallback: try without prefix
         if name_pattern in xdmf_data_dict:
             return xdmf_data_dict[name_pattern]
@@ -230,11 +231,25 @@ def compute_TKE_components(xdmf_data_dict):
     u1, u2, u3 = get_var('u1'), get_var('u2'), get_var('u3')
     pr = get_var('pr')
 
-    # Extract Reynolds stresses ⟨uᵢuⱼ⟩
+    # Compute mean velocity gradients from 3D t_avg data (z,y,x)
+    u1_3d = get_var('u1', data_type='t_avg')
+    u2_3d = get_var('u2', data_type='t_avg')
+    u3_3d = get_var('u3', data_type='t_avg')
+    du_dx11 = np.gradient(u1_3d.mean(axis=(0, 1))) if u1_3d is not None else None
+    du_dx12 = np.gradient(u1_3d.mean(axis=(0, 2))) if u1_3d is not None else None
+    du_dx13 = np.gradient(u1_3d.mean(axis=(1, 2))) if u1_3d is not None else None
+    du_dx21 = np.gradient(u2_3d.mean(axis=(0, 1))) if u2_3d is not None else None
+    du_dx22 = np.gradient(u2_3d.mean(axis=(0, 2))) if u2_3d is not None else None
+    du_dx23 = np.gradient(u2_3d.mean(axis=(1, 2))) if u2_3d is not None else None
+    du_dx31 = np.gradient(u3_3d.mean(axis=(0, 1))) if u3_3d is not None else None
+    du_dx32 = np.gradient(u3_3d.mean(axis=(0, 2))) if u3_3d is not None else None
+    du_dx33 = np.gradient(u3_3d.mean(axis=(1, 2))) if u3_3d is not None else None
+
+    # Extract velocity correlations ⟨uᵢuⱼ⟩
     uu11, uu12, uu13 = get_var('uu11'), get_var('uu12'), get_var('uu13')
     uu22, uu23, uu33 = get_var('uu22'), get_var('uu23'), get_var('uu33')
 
-    # Extract pressure-velocity correlations ⟨p'u'ᵢ⟩
+    # Extract pressure-velocity correlations ⟨puᵢ⟩
     pru1, pru2, pru3 = get_var('pru1'), get_var('pru2'), get_var('pru3')
 
     # Extract triple correlations ⟨uᵢuⱼuₖ⟩
@@ -260,53 +275,34 @@ def compute_TKE_components(xdmf_data_dict):
     tke = 0.5 * (u1p_u1p + u2p_u2p + u3p_u3p)
 
     # Compute pressure-velocity fluctuation correlations ⟨p'u'ᵢ⟩ = ⟨puᵢ⟩ - ⟨p⟩⟨uᵢ⟩
-    pu1p = pru1 - pr * u1 if pru1 is not None else None
-    pu2p = pru2 - pr * u2 if pru2 is not None else None
-    pu3p = pru3 - pr * u3 if pru3 is not None else None
+    prpu1p = pru1 - pr * u1 if pru1 is not None else None
+    prpu2p = pru2 - pr * u2 if pru2 is not None else None
+    prpu3p = pru3 - pr * u3 if pru3 is not None else None
 
     # Compute triple correlations ⟨u'ᵢu'ⱼu'ₖ⟩ for turbulent diffusion
     # Using Reynolds decomposition: ⟨u'ᵢu'ⱼu'ₖ⟩ = ⟨uᵢuⱼuₖ⟩ - ⟨uᵢuⱼ⟩⟨uₖ⟩ - ⟨uᵢuₖ⟩⟨uⱼ⟩ - ⟨uⱼuₖ⟩⟨uᵢ⟩ + 2⟨uᵢ⟩⟨uⱼ⟩⟨uₖ⟩
 
     # For turbulent diffusion term: ⟨u'ᵢu'ᵢu'ⱼ⟩ components
-    # ⟨u'₁u'₁u'₁⟩ = ⟨u₁u₁u₁⟩ - 3⟨u₁u₁⟩⟨u₁⟩ + 2⟨u₁⟩³
-    u1pu1pu1p = uuu111 - 3*uu11*u1 + 2*u1**3 if uuu111 is not None else None
 
-    # ⟨u'₁u'₁u'₂⟩ = ⟨u₁u₁u₂⟩ - ⟨u₁u₁⟩⟨u₂⟩ - 2⟨u₁u₂⟩⟨u₁⟩ + 2⟨u₁⟩²⟨u₂⟩
-    u1pu1pu2p = uuu112 - uu11*u2 - 2*uu12*u1 + 2*u1**2*u2 if uuu112 is not None else None
+    u1pu1pu1p = uuu111 - 3*uu11*u1 + 2*u1**3 if uuu111 is not None else None              # ⟨u'₁u'₁u'₁⟩ = ⟨u₁u₁u₁⟩ - 3⟨u₁u₁⟩⟨u₁⟩ + 2⟨u₁⟩³
+    u1pu1pu2p = uuu112 - uu11*u2 - 2*uu12*u1 + 2*u1**2*u2 if uuu112 is not None else None # ⟨u'₁u'₁u'₂⟩ = ⟨u₁u₁u₂⟩ - ⟨u₁u₁⟩⟨u₂⟩ - 2⟨u₁u₂⟩⟨u₁⟩ + 2⟨u₁⟩²⟨u₂⟩
+    u1pu1pu3p = uuu113 - uu11*u3 - 2*uu13*u1 + 2*u1**2*u3 if uuu113 is not None else None # ⟨u'₁u'₁u'₃⟩ = ⟨u₁u₁u₃⟩ - ⟨u₁u₁⟩⟨u₃⟩ - 2⟨u₁u₃⟩⟨u₁⟩ + 2⟨u₁⟩²⟨u₃⟩
 
-    # ⟨u'₁u'₁u'₃⟩ = ⟨u₁u₁u₃⟩ - ⟨u₁u₁⟩⟨u₃⟩ - 2⟨u₁u₃⟩⟨u₁⟩ + 2⟨u₁⟩²⟨u₃⟩
-    u1pu1pu3p = uuu113 - uu11*u3 - 2*uu13*u1 + 2*u1**2*u3 if uuu113 is not None else None
+    u2pu2pu1p = uuu122 - uu22*u1 - 2*uu12*u2 + 2*u2**2*u1 if uuu122 is not None else None # ⟨u'₂u'₂u'₁⟩ = ⟨u₂u₂u₁⟩ - ⟨u₂u₂⟩⟨u₁⟩ - 2⟨u₂u₁⟩⟨u₂⟩ + 2⟨u₂⟩²⟨u₁⟩
+    u2pu2pu2p = uuu222 - 3*uu22*u2 + 2*u2**3 if uuu222 is not None else None              # ⟨u'₂u'₂u'₂⟩ = ⟨u₂u₂u₂⟩ - 3⟨u₂u₂⟩⟨u₂⟩ + 2⟨u₂⟩³
+    u2pu2pu3p = uuu223 - uu22*u3 - 2*uu23*u2 + 2*u2**2*u3 if uuu223 is not None else None # ⟨u'₂u'₂u'₃⟩ = ⟨u₂u₂u₃⟩ - ⟨u₂u₂⟩⟨u₃⟩ - 2⟨u₂u₃⟩⟨u₂⟩ + 2⟨u₂⟩²⟨u₃⟩
 
-    # ⟨u'₂u'₂u'₁⟩ = ⟨u₂u₂u₁⟩ - ⟨u₂u₂⟩⟨u₁⟩ - 2⟨u₂u₁⟩⟨u₂⟩ + 2⟨u₂⟩²⟨u₁⟩
-    u2pu2pu1p = uuu122 - uu22*u1 - 2*uu12*u2 + 2*u2**2*u1 if uuu122 is not None else None
-
-    # ⟨u'₂u'₂u'₂⟩ = ⟨u₂u₂u₂⟩ - 3⟨u₂u₂⟩⟨u₂⟩ + 2⟨u₂⟩³
-    u2pu2pu2p = uuu222 - 3*uu22*u2 + 2*u2**3 if uuu222 is not None else None
-
-    # ⟨u'₂u'₂u'₃⟩ = ⟨u₂u₂u₃⟩ - ⟨u₂u₂⟩⟨u₃⟩ - 2⟨u₂u₃⟩⟨u₂⟩ + 2⟨u₂⟩²⟨u₃⟩
-    u2pu2pu3p = uuu223 - uu22*u3 - 2*uu23*u2 + 2*u2**2*u3 if uuu223 is not None else None
-
-    # ⟨u'₃u'₃u'₁⟩ = ⟨u₃u₃u₁⟩ - ⟨u₃u₃⟩⟨u₁⟩ - 2⟨u₃u₁⟩⟨u₃⟩ + 2⟨u₃⟩²⟨u₁⟩
-    u3pu3pu1p = uuu133 - uu33*u1 - 2*uu13*u3 + 2*u3**2*u1 if uuu133 is not None else None
-
-    # ⟨u'₃u'₃u'₂⟩ = ⟨u₃u₃u₂⟩ - ⟨u₃u₃⟩⟨u₂⟩ - 2⟨u₃u₂⟩⟨u₃⟩ + 2⟨u₃⟩²⟨u₂⟩
-    u3pu3pu2p = uuu233 - uu33*u2 - 2*uu23*u3 + 2*u3**2*u2 if uuu233 is not None else None
-
-    # ⟨u'₃u'₃u'₃⟩ = ⟨u₃u₃u₃⟩ - 3⟨u₃u₃⟩⟨u₃⟩ + 2⟨u₃⟩³
-    u3pu3pu3p = uuu333 - 3*uu33*u3 + 2*u3**3 if uuu333 is not None else None
+    u3pu3pu1p = uuu133 - uu33*u1 - 2*uu13*u3 + 2*u3**2*u1 if uuu133 is not None else None # ⟨u'₃u'₃u'₁⟩ = ⟨u₃u₃u₁⟩ - ⟨u₃u₃⟩⟨u₁⟩ - 2⟨u₃u₁⟩⟨u₃⟩ + 2⟨u₃⟩²⟨u₁⟩
+    u3pu3pu2p = uuu233 - uu33*u2 - 2*uu23*u3 + 2*u3**2*u2 if uuu233 is not None else None # ⟨u'₃u'₃u'₂⟩ = ⟨u₃u₃u₂⟩ - ⟨u₃u₃⟩⟨u₂⟩ - 2⟨u₃u₂⟩⟨u₃⟩ + 2⟨u₃⟩²⟨u₂⟩
+    u3pu3pu3p = uuu333 - 3*uu33*u3 + 2*u3**3 if uuu333 is not None else None              # ⟨u'₃u'₃u'₃⟩ = ⟨u₃u₃u₃⟩ - 3⟨u₃u₃⟩⟨u₃⟩ + 2⟨u₃⟩³
 
     # For turbulent diffusion: ⟨u'ᵢu'ᵢu'ⱼ⟩ summed over i
-    # ⟨u'ᵢu'ᵢu'₁⟩ = ⟨u'₁u'₁u'₁⟩ + ⟨u'₂u'₂u'₁⟩ + ⟨u'₃u'₃u'₁⟩
     uiuiu1p = None
     if all(x is not None for x in [u1pu1pu1p, u2pu2pu1p, u3pu3pu1p]):
         uiuiu1p = u1pu1pu1p + u2pu2pu1p + u3pu3pu1p
-
-    # ⟨u'ᵢu'ᵢu'₂⟩ = ⟨u'₁u'₁u'₂⟩ + ⟨u'₂u'₂u'₂⟩ + ⟨u'₃u'₃u'₂⟩
     uiuiu2p = None
     if all(x is not None for x in [u1pu1pu2p, u2pu2pu2p, u3pu3pu2p]):
         uiuiu2p = u1pu1pu2p + u2pu2pu2p + u3pu3pu2p
-
-    # ⟨u'ᵢu'ᵢu'₃⟩ = ⟨u'₁u'₁u'₃⟩ + ⟨u'₂u'₂u'₃⟩ + ⟨u'₃u'₃u'₃⟩
     uiuiu3p = None
     if all(x is not None for x in [u1pu1pu3p, u2pu2pu3p, u3pu3pu3p]):
         uiuiu3p = u1pu1pu3p + u2pu2pu3p + u3pu3pu3p
@@ -315,6 +311,11 @@ def compute_TKE_components(xdmf_data_dict):
         # Mean velocities
         'U1': u1, 'U2': u2, 'U3': u3,
         'pr': pr,
+
+        # Mean velocity gradients
+        'du_dx11': du_dx11, 'du_dx12': du_dx12, 'du_dx13': du_dx13,
+        'du_dx21': du_dx21, 'du_dx22': du_dx22, 'du_dx23': du_dx23,
+        'du_dx31': du_dx31, 'du_dx32': du_dx32, 'du_dx33': du_dx33,
 
         # Reynolds stresses (fluctuating components)
         'u1p_u1p': u1p_u1p,
@@ -331,9 +332,9 @@ def compute_TKE_components(xdmf_data_dict):
         'TKE': tke,
 
         # Pressure-velocity fluctuation correlations ⟨p'u'ᵢ⟩
-        'pu1p': pu1p,
-        'pu2p': pu2p,
-        'pu3p': pu3p,
+        'prpu1p': prpu1p,
+        'prpu2p': prpu2p,
+        'prpu3p': prpu3p,
 
         # Individual triple correlations ⟨u'ᵢu'ᵢu'ⱼ⟩
         'u1pu1pu1p': u1pu1pu1p, 'u1pu1pu2p': u1pu1pu2p, 'u1pu1pu3p': u1pu1pu3p,
@@ -346,53 +347,67 @@ def compute_TKE_components(xdmf_data_dict):
         'uiuiu3p': uiuiu3p,
 
         # Dissipation correlations ⟨∂u'ᵢ/∂xⱼ ∂u'ᵢ/∂xⱼ⟩
-        # These are already fluctuating quantities from the XDMF file
+        # These are already fluctuating quantities from the XDMF file ! CHECK
         'dudu11': dudu11, 'dudu12': dudu12, 'dudu13': dudu13,
         'dudu22': dudu22, 'dudu23': dudu23, 'dudu33': dudu33,
     }
 
     return output_dict
 
-def compute_production(tke_comp_dict):
-    """
-    Compute production term for TKE budget: P_i = -<u'_i u'_j> * dU_i/dx_j
+def _build_reynolds_stress_tensor(tke_comp_dict):
+    R_ij = np.array([[tke_comp_dict['u1p_u1p'], tke_comp_dict['u1p_u2p'], tke_comp_dict['u1p_u3p']],
+             [tke_comp_dict['u2p_u1p'], tke_comp_dict['u2p_u2p'], tke_comp_dict['u2p_u3p']],
+             [tke_comp_dict['u3p_u1p'], tke_comp_dict['u3p_u2p'], tke_comp_dict['u3p_u3p']]])
+    return R_ij
 
+def _build_velocity_gradient_tensor(tke_comp_dict):
+    dUi_dxj = np.array([[tke_comp_dict['du_dx11'], tke_comp_dict['du_dx12'], tke_comp_dict['du_dx13']],
+                       [tke_comp_dict['du_dx21'], tke_comp_dict['du_dx22'], tke_comp_dict['du_dx23']],
+                       [tke_comp_dict['du_dx31'], tke_comp_dict['du_dx32'], tke_comp_dict['du_dx33']]])
+    return dUi_dxj
+
+def _parse_component(uiuj_str):
+    """Parse 'uu12' -> (i=0, j=1)"""
+    mapping = {'uu11': (0,0), 'uu12': (0,1), 'uu13': (0,2),
+               'uu22': (1,1), 'uu23': (1,2), 'uu33': (2,2)}
+    return mapping[uiuj_str]
+
+def compute_production(tke_comp_dict, uiuj='total'):
+    """
+    Compute production term for Reynolds stress transport equation.
+    
+    P_ij = -<u'_i u'_k> ∂U_j/∂x_k - <u'_j u'_k> ∂U_i/∂x_k
+    
     Args:
         tke_comp_dict: Dictionary from compute_TKE_components
-
+        uiuj: Reynolds stress component ('uu11', 'uu12', 'uu22', etc.) or 'total'
+    
     Returns:
-        dict: Production terms for each component and total
+        dict: Production term(s) for the specified component
     """
-    prod_u1 = -1 * (tke_comp_dict['u1p_u1p'] * tke_comp_dict['du1dx'] +
-                    tke_comp_dict['u1p_u2p'] * tke_comp_dict['du1dy'] +
-                    tke_comp_dict['u1p_u3p'] * tke_comp_dict['du1dz'])
-
-    prod_u2 = -1 * (tke_comp_dict['u2p_u1p'] * tke_comp_dict['du2dx'] +
-                    tke_comp_dict['u2p_u2p'] * tke_comp_dict['du2dy'] +
-                    tke_comp_dict['u2p_u3p'] * tke_comp_dict['du2dz'])
-
-    prod_u3 = -1 * (tke_comp_dict['u3p_u1p'] * tke_comp_dict['du3dx'] +
-                    tke_comp_dict['u3p_u2p'] * tke_comp_dict['du3dy'] +
-                    tke_comp_dict['u3p_u3p'] * tke_comp_dict['du3dz'])
-
-    return {
-        'prod_u1': prod_u1,
-        'prod_u2': prod_u2,
-        'prod_u3': prod_u3,
-        'prod_total': prod_u1 + prod_u2 + prod_u3
-    }
+    
+    R_ij = _build_reynolds_stress_tensor(tke_comp_dict)
+    dUi_dxj = _build_velocity_gradient_tensor(tke_comp_dict)
+    
+    if uiuj == 'total':
+        production = -np.einsum('...ij,...ij->...', R_ij, dUi_dxj) # Total TKE production computed over Re stress tensor
+        return {'production': production}
+    else:
+        # Production for specific Reynolds stress component
+        i, j = _parse_component(uiuj)
+        
+        # P_ij = -<u'_i u'_k> ∂U_j/∂x_k - <u'_j u'_k> ∂U_i/∂x_k
+        term1 = -np.einsum('...k,...k->...', R_ij[..., i, :], dUi_dxj[..., j, :])
+        term2 = -np.einsum('...k,...k->...', R_ij[..., j, :], dUi_dxj[..., i, :])
+        
+        production = term1 + term2
+        return {f'production_{uiuj}': production}
 
 def compute_dissipation(Re, tke_comp_dict):
     """
     Compute dissipation term for TKE budget.
 
     Formula: ε = -(1/Re) * ⟨∂u'ᵢ/∂xⱼ ∂u'ᵢ/∂xⱼ⟩
-
-    The XDMF data provides:
-    - dudu11 = ⟨∂u₁/∂x₁ ∂u₁/∂x₁⟩ (and similar for other components)
-
-    The total dissipation is the sum over all velocity components and all directions:
-    ε = -(1/Re) * Σᵢ Σⱼ ⟨∂u'ᵢ/∂xⱼ ∂u'ᵢ/∂xⱼ⟩
 
     Args:
         Re: Reynolds number
@@ -401,7 +416,7 @@ def compute_dissipation(Re, tke_comp_dict):
     Returns:
         dict: Dissipation term
     """
-    # Extract dissipation correlations
+    # Extract dissipation correlation components from the dictionary
     dudu11 = tke_comp_dict.get('dudu11')
     dudu12 = tke_comp_dict.get('dudu12')
     dudu13 = tke_comp_dict.get('dudu13')
@@ -429,7 +444,7 @@ def compute_dissipation(Re, tke_comp_dict):
 
 def compute_convection(mean_velocities, tke_gradients):
     """
-    Compute convection (advection) term for TKE budget.
+    Compute convection term.
 
     Formula: C = -Uⱼ ∂k/∂xⱼ = -U₁∂k/∂x - U₂∂k/∂y - U₃∂k/∂z
 
@@ -480,6 +495,10 @@ def compute_pressure_transport(pressure_velocity_corr_grads):
     press_transport = -(pressure_velocity_corr_grads['d_pu1p_dx'] +
                         pressure_velocity_corr_grads['d_pu2p_dy'] +
                         pressure_velocity_corr_grads['d_pu3p_dz'])
+    
+    # Requires 
+
+    #press_strain = 
 
     return {'pressure_transport': press_transport}
 
