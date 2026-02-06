@@ -185,12 +185,12 @@ def compute_triple_correlation_gradient(data_dict):
     _, uuu233 = _extract_profile_cols(arr_uuu233)
 
     # Compute fluctuating triple correlations ⟨u'ᵢu'ᵢu'₂⟩
-    u1pu1pu2p = uuu112 - uu11 * u2 - 2 * uu12 * u1 + 2 * (u1**2) * u2
-    u2pu2pu2p = uuu222 - 3 * uu22 * u2 + 2 * (u2**3)
-    u3pu3pu2p = uuu233 - uu33 * u2 - 2 * uu23 * u3 + 2 * (u3**2) * u2
+    uuu112_prime = uuu112 - uu11 * u2 - 2 * uu12 * u1 + 2 * (u1**2) * u2
+    uuu222_prime = uuu222 - 3 * uu22 * u2 + 2 * (u2**3)
+    uuu233_prime = uuu233 - uu33 * u2 - 2 * uu23 * u3 + 2 * (u3**2) * u2
 
     # Sum to get ⟨u'ᵢu'ᵢu'₂⟩
-    uiuiu2p = u1pu1pu2p + u2pu2pu2p + u3pu3pu2p
+    uiuiu2p = uuu112_prime + uuu222_prime + uuu233_prime
     d_uiuiu2p_dy = np.gradient(uiuiu2p, y)
 
     index = arr_u1[:, 0]
@@ -235,77 +235,164 @@ def compute_TKE_components(xdmf_data_dict):
     u1_3d = get_var('u1', data_type='t_avg')
     u2_3d = get_var('u2', data_type='t_avg')
     u3_3d = get_var('u3', data_type='t_avg')
-    du_dx11 = np.gradient(u1_3d.mean(axis=(0, 1))) if u1_3d is not None else None
-    du_dx12 = np.gradient(u1_3d.mean(axis=(0, 2))) if u1_3d is not None else None
-    du_dx13 = np.gradient(u1_3d.mean(axis=(1, 2))) if u1_3d is not None else None
-    du_dx21 = np.gradient(u2_3d.mean(axis=(0, 1))) if u2_3d is not None else None
-    du_dx22 = np.gradient(u2_3d.mean(axis=(0, 2))) if u2_3d is not None else None
-    du_dx23 = np.gradient(u2_3d.mean(axis=(1, 2))) if u2_3d is not None else None
-    du_dx31 = np.gradient(u3_3d.mean(axis=(0, 1))) if u3_3d is not None else None
-    du_dx32 = np.gradient(u3_3d.mean(axis=(0, 2))) if u3_3d is not None else None
-    du_dx33 = np.gradient(u3_3d.mean(axis=(1, 2))) if u3_3d is not None else None
+    du_dx11 = np.gradient(u1_3d, axis = 2) if u1_3d is not None else None
+    du_dx12 = np.gradient(u1_3d, axis = 1) if u1_3d is not None else None
+    du_dx13 = np.gradient(u1_3d, axis = 0) if u1_3d is not None else None
+    du_dx21 = np.gradient(u2_3d, axis = 2) if u2_3d is not None else None
+    du_dx22 = np.gradient(u2_3d, axis = 1) if u2_3d is not None else None
+    du_dx23 = np.gradient(u2_3d, axis = 0) if u2_3d is not None else None
+    du_dx31 = np.gradient(u3_3d, axis = 2) if u3_3d is not None else None
+    du_dx32 = np.gradient(u3_3d, axis = 1) if u3_3d is not None else None
+    du_dx33 = np.gradient(u3_3d, axis = 0) if u3_3d is not None else None
+    mean_velocity_grad_tensor = np.array([[du_dx11, du_dx12, du_dx13],
+                                         [du_dx21, du_dx22, du_dx23],
+                                         [du_dx31, du_dx32, du_dx33]])
 
     # Extract velocity correlations ⟨uᵢuⱼ⟩
     uu11, uu12, uu13 = get_var('uu11'), get_var('uu12'), get_var('uu13')
     uu22, uu23, uu33 = get_var('uu22'), get_var('uu23'), get_var('uu33')
 
+    # Compute Reynolds stress fluctuations ⟨u'ᵢu'ⱼ⟩ = ⟨uᵢuⱼ⟩ - ⟨uᵢ⟩⟨uⱼ⟩ in 1D
+    uu11_prime = uu11 - u1**2
+    uu22_prime = uu22 - u2**2
+    uu33_prime = uu33 - u3**2
+    uu12_prime = uu12 - u1 * u2
+    uu13_prime = uu13 - u1 * u3
+    uu23_prime = uu23 - u2 * u3
+    reynolds_stress_tensor = np.array([[uu11_prime, uu12_prime, uu13_prime],
+                                      [uu12_prime, uu22_prime, uu23_prime],
+                                      [uu13_prime, uu23_prime, uu33_prime]])
+
+    uu11_3d, uu12_3d, uu13_3d = get_var('uu11', data_type='t_avg'), get_var('uu12', data_type='t_avg'), get_var('uu13', data_type='t_avg')
+    uu22_3d, uu23_3d, uu33_3d = get_var('uu22', data_type='t_avg'), get_var('uu23', data_type='t_avg'), get_var('uu33', data_type='t_avg')
+
+    uu11_prime_3d = uu11_3d - u1_3d**2 if uu11_3d else None
+    uu22_prime_3d = uu22_3d - u2_3d**2 if uu22_3d else None
+    uu33_prime_3d = uu33_3d - u3_3d**2 if uu33_3d else None
+    uu12_prime_3d = uu12_3d - u1_3d * u2_3d if uu12_3d else None
+    uu13_prime_3d = uu13_3d - u1_3d * u3_3d if uu13_3d else None
+    uu23_prime_3d = uu23_3d - u2_3d * u3_3d if uu23_3d else None
+
+    # Mean Convection terms: U_k ∂⟨u'_iu'_j⟩/∂x_k
+    U1duu11_prime_dx1 = u1 * np.gradient(uu11_prime_3d, axis = 2) if uu11_prime_3d is not None else None
+    U2duu11_prime_dx2 = u2 * np.gradient(uu11_prime_3d, axis = 1) if uu11_prime_3d is not None else None
+    U3duu11_prime_dx3 = u3 * np.gradient(uu11_prime_3d, axis = 0) if uu11_prime_3d is not None else None
+    
+    U1duu22_prime_dx1 = u1 * np.gradient(uu22_prime_3d, axis = 2) if uu22_prime_3d is not None else None
+    U2duu22_prime_dx2 = u2 * np.gradient(uu22_prime_3d, axis = 1) if uu22_prime_3d is not None else None
+    U3duu22_prime_dx3 = u3 * np.gradient(uu22_prime_3d, axis = 0) if uu22_prime_3d is not None else None
+    
+    U1duu33_prime_dx1 = u1 * np.gradient(uu33_prime_3d, axis = 2) if uu33_prime_3d is not None else None
+    U2duu33_prime_dx2 = u2 * np.gradient(uu33_prime_3d, axis = 1) if uu33_prime_3d is not None else None
+    U3duu33_prime_dx3 = u3 * np.gradient(uu33_prime_3d, axis = 0) if uu33_prime_3d is not None else None
+    
+    U1duu12_prime_dx1 = u1 * np.gradient(uu12_prime_3d, axis = 2) if uu12_prime_3d is not None else None
+    U2duu12_prime_dx2 = u2 * np.gradient(uu12_prime_3d, axis = 1) if uu12_prime_3d is not None else None
+    U3duu12_prime_dx3 = u3 * np.gradient(uu12_prime_3d, axis = 0) if uu12_prime_3d is not None else None
+    
+    U1duu13_prime_dx1 = u1 * np.gradient(uu13_prime_3d, axis = 2) if uu13_prime_3d is not None else None
+    U2duu13_prime_dx2 = u2 * np.gradient(uu13_prime_3d, axis = 1) if uu13_prime_3d is not None else None
+    U3duu13_prime_dx3 = u3 * np.gradient(uu13_prime_3d, axis = 0) if uu13_prime_3d is not None else None
+    
+    U1duu23_prime_dx1 = u1 * np.gradient(uu23_prime_3d, axis = 2) if uu23_prime_3d is not None else None
+    U2duu23_prime_dx2 = u2 * np.gradient(uu23_prime_3d, axis = 1) if uu23_prime_3d is not None else None
+    U3duu23_prime_dx3 = u3 * np.gradient(uu23_prime_3d, axis = 0) if uu23_prime_3d is not None else None
+
+    mean_conv_tensor_x1 = np.array([[U1duu11_prime_dx1, U1duu12_prime_dx1, U1duu13_prime_dx1],
+                                    [U1duu12_prime_dx1, U1duu22_prime_dx1, U1duu23_prime_dx1],
+                                    [U1duu13_prime_dx1, U1duu23_prime_dx1, U1duu33_prime_dx1]])
+    mean_conv_tensor_x2 = np.array([[U2duu11_prime_dx2, U2duu12_prime_dx2, U2duu13_prime_dx2],
+                                    [U2duu12_prime_dx2, U2duu22_prime_dx2, U2duu23_prime_dx2],
+                                    [U2duu13_prime_dx2, U2duu23_prime_dx2, U2duu33_prime_dx2]])
+    mean_conv_tensor_x3 = np.array([[U3duu11_prime_dx3, U3duu12_prime_dx3, U3duu13_prime_dx3],
+                                    [U3duu12_prime_dx3, U3duu22_prime_dx3, U3duu23_prime_dx3],
+                                    [U3duu13_prime_dx3, U3duu23_prime_dx3, U3duu33_prime_dx3]])
+
     # Extract pressure-velocity correlations ⟨puᵢ⟩
     pru1, pru2, pru3 = get_var('pru1'), get_var('pru2'), get_var('pru3')
 
     # Extract triple correlations ⟨uᵢuⱼuₖ⟩
-    uuu111 = get_var('uuu111')
-    uuu112, uuu113 = get_var('uuu112'), get_var('uuu113')
-    uuu122, uuu123, uuu133 = get_var('uuu122'), get_var('uuu123'), get_var('uuu133')
-    uuu222, uuu223, uuu233 = get_var('uuu222'), get_var('uuu223'), get_var('uuu233')
-    uuu333 = get_var('uuu333')
+
+    uuu111_3d, uuu112_3d, uuu113_3d = get_var('uuu111', data_type='t_avg'), get_var('uuu112', data_type='t_avg'), get_var('uuu113', data_type='t_avg')
+    uuu122_3d, uuu123_3d, uuu133_3d = get_var('uuu122', data_type='t_avg'), get_var('uuu123', data_type='t_avg'), get_var('uuu133', data_type='t_avg')
+    uuu222_3d, uuu223_3d, uuu233_3d = get_var('uuu222', data_type='t_avg'), get_var('uuu223', data_type='t_avg'), get_var('uuu233', data_type='t_avg')
+    uuu333_3d = get_var('uuu333', data_type='t_avg')
 
     # Extract dissipation correlations ⟨∂uᵢ/∂xⱼ ∂uᵢ/∂xⱼ⟩
     dudu11, dudu12, dudu13 = get_var('dudu11'), get_var('dudu12'), get_var('dudu13')
     dudu22, dudu23, dudu33 = get_var('dudu22'), get_var('dudu23'), get_var('dudu33')
 
-    # Compute Reynolds stress fluctuations ⟨u'ᵢu'ⱼ⟩ = ⟨uᵢuⱼ⟩ - ⟨uᵢ⟩⟨uⱼ⟩
-    u1p_u1p = uu11 - u1**2
-    u2p_u2p = uu22 - u2**2
-    u3p_u3p = uu33 - u3**2
-    u1p_u2p = uu12 - u1 * u2
-    u1p_u3p = uu13 - u1 * u3
-    u2p_u3p = uu23 - u2 * u3
+    dudu11_mean = np.sum(np.square(du_dx11), np.square(du_dx12), np.square(du_dx13))
+    dudu22_mean = np.sum(np.square(du_dx21), np.square(du_dx22), np.square(du_dx23))
+    dudu33_mean = np.sum(np.square(du_dx31), np.square(du_dx32), np.square(du_dx33))
+    dudu12_mean = np.sum(np.multiply(du_dx11, du_dx21), np.multiply(du_dx12, du_dx22), np.multiply(du_dx13, du_dx23))
+    dudu13_mean = np.sum(np.multiply(du_dx11, du_dx31), np.multiply(du_dx12, du_dx32), np.multiply(du_dx13, du_dx33))
+    dudu23_mean = np.sum(np.multiply(du_dx21, du_dx31), np.multiply(du_dx22, du_dx32), np.multiply(du_dx23, du_dx33))
+
+    dudu11_prime = dudu11 - dudu11_mean
+    dudu22_prime = dudu22 - dudu22_mean
+    dudu33_prime = dudu33 - dudu33_mean
+    dudu12_prime = dudu12 - dudu12_mean
+    dudu13_prime = dudu13 - dudu13_mean
+    dudu23_prime = dudu23 - dudu23_mean
+
+    dissipation_tensor = np.array([[dudu11_prime, dudu12_prime, dudu13_prime],
+                                   [dudu12_prime, dudu22_prime, dudu23_prime],
+                                   [dudu13_prime, dudu23_prime, dudu33_prime]])
 
     # Compute TKE = (1/2)⟨u'ᵢu'ᵢ⟩
-    tke = 0.5 * (u1p_u1p + u2p_u2p + u3p_u3p)
+    tke = 0.5 * (uu11_prime + uu22_prime + uu33_prime)
 
     # Compute pressure-velocity fluctuation correlations ⟨p'u'ᵢ⟩ = ⟨puᵢ⟩ - ⟨p⟩⟨uᵢ⟩
-    prpu1p = pru1 - pr * u1 if pru1 is not None else None
-    prpu2p = pru2 - pr * u2 if pru2 is not None else None
-    prpu3p = pru3 - pr * u3 if pru3 is not None else None
+    pru1_prime = pru1 - pr * u1 if pru1 is not None else None
+    pru2_prime = pru2 - pr * u2 if pru2 is not None else None
+    pru3_prime = pru3 - pr * u3 if pru3 is not None else None
 
     # Compute triple correlations ⟨u'ᵢu'ⱼu'ₖ⟩ for turbulent diffusion
     # Using Reynolds decomposition: ⟨u'ᵢu'ⱼu'ₖ⟩ = ⟨uᵢuⱼuₖ⟩ - ⟨uᵢuⱼ⟩⟨uₖ⟩ - ⟨uᵢuₖ⟩⟨uⱼ⟩ - ⟨uⱼuₖ⟩⟨uᵢ⟩ + 2⟨uᵢ⟩⟨uⱼ⟩⟨uₖ⟩
 
-    # For turbulent diffusion term: ⟨u'ᵢu'ᵢu'ⱼ⟩ components
+    uuu111_prime_3d = uuu111_3d - 3*uu11_3d*u1_3d + 2*u1_3d**3 if uuu111_3d is not None else None
+    uuu122_prime_3d = uuu122_3d - uu22_3d*u1_3d - 2*uu12_3d*u2_3d + 2*u2_3d**2*u1_3d if uuu122_3d is not None else None
+    uuu123_prime_3d = uuu123_3d - uu23_3d*u1_3d - uu13_3d*u2_3d - uu12_3d*u3_3d + 2*u1_3d*u2_3d*u3_3d if uuu123_3d is not None else None
+    uuu133_prime_3d = uuu133_3d - uu33_3d*u1_3d - 2*uu13_3d*u3_3d + 2*u3_3d**2*u1_3d if uuu133_3d is not None else None
+    uuu112_prime_3d = uuu112_3d - uu11_3d*u2_3d - 2*uu12_3d*u1_3d + 2*u1_3d**2*u2_3d if uuu112_3d is not None else None
+    uuu222_prime_3d = uuu222_3d - 3*uu22_3d*u2_3d + 2*u2_3d**3 if uuu222_3d is not None else None
+    uuu233_prime_3d = uuu233_3d - uu33_3d*u2_3d - 2*uu23_3d*u3_3d + 2*u3_3d**2*u2_3d if uuu233_3d is not None else None
+    uuu113_prime_3d = uuu113_3d - uu11_3d*u3_3d - 2*uu13_3d*u1_3d + 2*u1_3d**2*u3_3d if uuu113_3d is not None else None
+    uuu223_prime_3d = uuu223_3d - uu22_3d*u3_3d - 2*uu23_3d*u2_3d + 2*u2_3d**2*u3_3d if uuu223_3d is not None else None
+    uuu333_prime_3d = uuu333_3d - 3*uu33_3d*u3_3d + 2*u3_3d**3 if uuu333_3d is not None else None
 
-    u1pu1pu1p = uuu111 - 3*uu11*u1 + 2*u1**3 if uuu111 is not None else None              # ⟨u'₁u'₁u'₁⟩ = ⟨u₁u₁u₁⟩ - 3⟨u₁u₁⟩⟨u₁⟩ + 2⟨u₁⟩³
-    u1pu1pu2p = uuu112 - uu11*u2 - 2*uu12*u1 + 2*u1**2*u2 if uuu112 is not None else None # ⟨u'₁u'₁u'₂⟩ = ⟨u₁u₁u₂⟩ - ⟨u₁u₁⟩⟨u₂⟩ - 2⟨u₁u₂⟩⟨u₁⟩ + 2⟨u₁⟩²⟨u₂⟩
-    u1pu1pu3p = uuu113 - uu11*u3 - 2*uu13*u1 + 2*u1**2*u3 if uuu113 is not None else None # ⟨u'₁u'₁u'₃⟩ = ⟨u₁u₁u₃⟩ - ⟨u₁u₁⟩⟨u₃⟩ - 2⟨u₁u₃⟩⟨u₁⟩ + 2⟨u₁⟩²⟨u₃⟩
+    duuu111_prime_dx1 = np.gradient(uuu111_prime_3d, axis = 2) if uuu111_prime_3d is not None else None
+    duuu121_prime_dx1 = np.gradient(uuu112_prime_3d, axis = 2) if uuu112_prime_3d is not None else None
+    duuu131_prime_dx1 = np.gradient(uuu113_prime_3d, axis = 2) if uuu113_prime_3d is not None else None
+    duuu221_prime_dx1 = np.gradient(uuu122_prime_3d, axis = 2) if uuu122_prime_3d is not None else None
+    duuu231_prime_dx1 = np.gradient(uuu123_prime_3d, axis = 2) if uuu123_prime_3d is not None else None
+    duuu331_prime_dx1 = np.gradient(uuu133_prime_3d, axis = 2) if uuu133_prime_3d is not None else None
 
-    u2pu2pu1p = uuu122 - uu22*u1 - 2*uu12*u2 + 2*u2**2*u1 if uuu122 is not None else None # ⟨u'₂u'₂u'₁⟩ = ⟨u₂u₂u₁⟩ - ⟨u₂u₂⟩⟨u₁⟩ - 2⟨u₂u₁⟩⟨u₂⟩ + 2⟨u₂⟩²⟨u₁⟩
-    u2pu2pu2p = uuu222 - 3*uu22*u2 + 2*u2**3 if uuu222 is not None else None              # ⟨u'₂u'₂u'₂⟩ = ⟨u₂u₂u₂⟩ - 3⟨u₂u₂⟩⟨u₂⟩ + 2⟨u₂⟩³
-    u2pu2pu3p = uuu223 - uu22*u3 - 2*uu23*u2 + 2*u2**2*u3 if uuu223 is not None else None # ⟨u'₂u'₂u'₃⟩ = ⟨u₂u₂u₃⟩ - ⟨u₂u₂⟩⟨u₃⟩ - 2⟨u₂u₃⟩⟨u₂⟩ + 2⟨u₂⟩²⟨u₃⟩
+    duuu112_prime_dx2 = np.gradient(uuu112_prime_3d, axis = 1) if uuu112_prime_3d is not None else None
+    duuu122_prime_dx2 = np.gradient(uuu122_prime_3d, axis = 1) if uuu122_prime_3d is not None else None
+    duuu132_prime_dx2 = np.gradient(uuu123_prime_3d, axis = 1) if uuu123_prime_3d is not None else None
+    duuu222_prime_dx2 = np.gradient(uuu222_prime_3d, axis = 1) if uuu222_prime_3d is not None else None
+    duuu232_prime_dx2 = np.gradient(uuu233_prime_3d, axis = 1) if uuu233_prime_3d is not None else None
+    duuu332_prime_dx2 = np.gradient(uuu223_prime_3d, axis = 1) if uuu223_prime_3d is not None else None
 
-    u3pu3pu1p = uuu133 - uu33*u1 - 2*uu13*u3 + 2*u3**2*u1 if uuu133 is not None else None # ⟨u'₃u'₃u'₁⟩ = ⟨u₃u₃u₁⟩ - ⟨u₃u₃⟩⟨u₁⟩ - 2⟨u₃u₁⟩⟨u₃⟩ + 2⟨u₃⟩²⟨u₁⟩
-    u3pu3pu2p = uuu233 - uu33*u2 - 2*uu23*u3 + 2*u3**2*u2 if uuu233 is not None else None # ⟨u'₃u'₃u'₂⟩ = ⟨u₃u₃u₂⟩ - ⟨u₃u₃⟩⟨u₂⟩ - 2⟨u₃u₂⟩⟨u₃⟩ + 2⟨u₃⟩²⟨u₂⟩
-    u3pu3pu3p = uuu333 - 3*uu33*u3 + 2*u3**3 if uuu333 is not None else None              # ⟨u'₃u'₃u'₃⟩ = ⟨u₃u₃u₃⟩ - 3⟨u₃u₃⟩⟨u₃⟩ + 2⟨u₃⟩³
+    duuu113_prime_dx3 = np.gradient(uuu113_prime_3d, axis = 0) if uuu113_prime_3d is not None else None
+    duuu123_prime_dx3 = np.gradient(uuu123_prime_3d, axis = 0) if uuu123_prime_3d is not None else None
+    duuu133_prime_dx3 = np.gradient(uuu133_prime_3d, axis = 0) if uuu133_prime_3d is not None else None
+    duuu233_prime_dx3 = np.gradient(uuu233_prime_3d, axis = 0) if uuu233_prime_3d is not None else None
+    duuu223_prime_dx3 = np.gradient(uuu223_prime_3d, axis = 0) if uuu223_prime_3d is not None else None
+    duuu333_prime_dx3 = np.gradient(uuu333_prime_3d, axis = 0) if uuu333_prime_3d is not None else None
 
-    # For turbulent diffusion: ⟨u'ᵢu'ᵢu'ⱼ⟩ summed over i
-    uiuiu1p = None
-    if all(x is not None for x in [u1pu1pu1p, u2pu2pu1p, u3pu3pu1p]):
-        uiuiu1p = u1pu1pu1p + u2pu2pu1p + u3pu3pu1p
-    uiuiu2p = None
-    if all(x is not None for x in [u1pu1pu2p, u2pu2pu2p, u3pu3pu2p]):
-        uiuiu2p = u1pu1pu2p + u2pu2pu2p + u3pu3pu2p
-    uiuiu3p = None
-    if all(x is not None for x in [u1pu1pu3p, u2pu2pu3p, u3pu3pu3p]):
-        uiuiu3p = u1pu1pu3p + u2pu2pu3p + u3pu3pu3p
+    # turbulent diffusion tensors
+    turb_conv_tensor_x1 = np.array([duuu111_prime_dx1, duuu121_prime_dx1, duuu131_prime_dx1,
+                                    duuu121_prime_dx1, duuu221_prime_dx1, duuu231_prime_dx1,
+                                    duuu131_prime_dx1, duuu231_prime_dx1, duuu331_prime_dx1])
+    turb_conv_tensor_x2 = np.array([duuu112_prime_dx2, duuu122_prime_dx2, duuu132_prime_dx2,
+                                    duuu122_prime_dx2, duuu222_prime_dx2, duuu232_prime_dx2,
+                                    duuu132_prime_dx2, duuu232_prime_dx2, duuu332_prime_dx2])
+    turb_conv_tensor_x3 = np.array([duuu113_prime_dx3, duuu123_prime_dx3, duuu133_prime_dx3,
+                                    duuu123_prime_dx3, duuu223_prime_dx3, duuu233_prime_dx3,
+                                    duuu133_prime_dx3, duuu233_prime_dx3, duuu333_prime_dx3])
 
     output_dict = {
         # Mean velocities
@@ -313,58 +400,36 @@ def compute_TKE_components(xdmf_data_dict):
         'pr': pr,
 
         # Mean velocity gradients
-        'du_dx11': du_dx11, 'du_dx12': du_dx12, 'du_dx13': du_dx13,
-        'du_dx21': du_dx21, 'du_dx22': du_dx22, 'du_dx23': du_dx23,
-        'du_dx31': du_dx31, 'du_dx32': du_dx32, 'du_dx33': du_dx33,
+        'mean_velocity_grad_tensor': mean_velocity_grad_tensor,
 
         # Reynolds stresses (fluctuating components)
-        'u1p_u1p': u1p_u1p,
-        'u2p_u2p': u2p_u2p,
-        'u3p_u3p': u3p_u3p,
-        'u1p_u2p': u1p_u2p,
-        'u2p_u1p': u1p_u2p,  # Symmetric
-        'u1p_u3p': u1p_u3p,
-        'u3p_u1p': u1p_u3p,  # Symmetric
-        'u2p_u3p': u2p_u3p,
-        'u3p_u2p': u2p_u3p,  # Symmetric
+        'reynolds_stress_tensor': reynolds_stress_tensor,
 
         # TKE
         'TKE': tke,
 
         # Pressure-velocity fluctuation correlations ⟨p'u'ᵢ⟩
-        'prpu1p': prpu1p,
-        'prpu2p': prpu2p,
-        'prpu3p': prpu3p,
+        'prpu1p': pru1_prime,
+        'prpu2p': pru2_prime,
+        'prpu3p': pru3_prime,
 
-        # Individual triple correlations ⟨u'ᵢu'ᵢu'ⱼ⟩
-        'u1pu1pu1p': u1pu1pu1p, 'u1pu1pu2p': u1pu1pu2p, 'u1pu1pu3p': u1pu1pu3p,
-        'u2pu2pu1p': u2pu2pu1p, 'u2pu2pu2p': u2pu2pu2p, 'u2pu2pu3p': u2pu2pu3p,
-        'u3pu3pu1p': u3pu3pu1p, 'u3pu3pu2p': u3pu3pu2p, 'u3pu3pu3p': u3pu3pu3p,
-
-        # Summed triple correlations for turbulent diffusion: ⟨u'ᵢu'ᵢu'ⱼ⟩
-        'uiuiu1p': uiuiu1p,
-        'uiuiu2p': uiuiu2p,
-        'uiuiu3p': uiuiu3p,
+        # Triple velocity correlation gradient tensors for turbulent convection
+        'turb_conv_tensor_x1': turb_conv_tensor_x1,
+        'turb_conv_tensor_x2': turb_conv_tensor_x2,
+        'turb_conv_tensor_x3': turb_conv_tensor_x3,
 
         # Dissipation correlations ⟨∂u'ᵢ/∂xⱼ ∂u'ᵢ/∂xⱼ⟩
-        # These are already fluctuating quantities from the XDMF file ! CHECK
-        'dudu11': dudu11, 'dudu12': dudu12, 'dudu13': dudu13,
-        'dudu22': dudu22, 'dudu23': dudu23, 'dudu33': dudu33,
+        'dissipation_tensor': dissipation_tensor,
+    
+        # Mean convection tensors U_k ∂⟨u'ᵢu'ⱼ⟩/∂x_k
+        'mean_conv_tensor_x1': mean_conv_tensor_x1,
+        'mean_conv_tensor_x2': mean_conv_tensor_x2,
+        'mean_conv_tensor_x3': mean_conv_tensor_x3,
     }
 
     return output_dict
 
-def _build_reynolds_stress_tensor(tke_comp_dict):
-    R_ij = np.array([[tke_comp_dict['u1p_u1p'], tke_comp_dict['u1p_u2p'], tke_comp_dict['u1p_u3p']],
-             [tke_comp_dict['u2p_u1p'], tke_comp_dict['u2p_u2p'], tke_comp_dict['u2p_u3p']],
-             [tke_comp_dict['u3p_u1p'], tke_comp_dict['u3p_u2p'], tke_comp_dict['u3p_u3p']]])
-    return R_ij
-
-def _build_velocity_gradient_tensor(tke_comp_dict):
-    dUi_dxj = np.array([[tke_comp_dict['du_dx11'], tke_comp_dict['du_dx12'], tke_comp_dict['du_dx13']],
-                       [tke_comp_dict['du_dx21'], tke_comp_dict['du_dx22'], tke_comp_dict['du_dx23']],
-                       [tke_comp_dict['du_dx31'], tke_comp_dict['du_dx32'], tke_comp_dict['du_dx33']]])
-    return dUi_dxj
+# tensors
 
 def _parse_component(uiuj_str):
     """Parse 'uu12' -> (i=0, j=1)"""
@@ -386,8 +451,8 @@ def compute_production(tke_comp_dict, uiuj='total'):
         dict: Production term(s) for the specified component
     """
     
-    R_ij = _build_reynolds_stress_tensor(tke_comp_dict)
-    dUi_dxj = _build_velocity_gradient_tensor(tke_comp_dict)
+    R_ij = tke_comp_dict['reynolds_stress_tensor']
+    dUi_dxj = tke_comp_dict['mean_velocity_grad_tensor']
     
     if uiuj == 'total':
         production = -np.einsum('...ij,...ij->...', R_ij, dUi_dxj) # Total TKE production computed over Re stress tensor
@@ -403,7 +468,7 @@ def compute_production(tke_comp_dict, uiuj='total'):
         production = term1 + term2
         return {f'production_{uiuj}': production}
 
-def compute_dissipation(Re, tke_comp_dict):
+def compute_dissipation(Re, tke_comp_dict, uiuj='total'):
     """
     Compute dissipation term for TKE budget.
 
@@ -411,72 +476,73 @@ def compute_dissipation(Re, tke_comp_dict):
 
     Args:
         Re: Reynolds number
-        tke_comp_dict: Dictionary from compute_TKE_components containing dudu11, dudu22, dudu33
+        tke_comp_dict: Dictionary from compute_TKE_components containing dissipation_tensor components
+        uiuj: Reynolds stress component ('uu11', 'uu12', 'uu22', etc.) or 'total' for total dissipation
 
     Returns:
         dict: Dissipation term
     """
-    # Extract dissipation correlation components from the dictionary
-    dudu11 = tke_comp_dict.get('dudu11')
-    dudu12 = tke_comp_dict.get('dudu12')
-    dudu13 = tke_comp_dict.get('dudu13')
-    dudu22 = tke_comp_dict.get('dudu22')
-    dudu23 = tke_comp_dict.get('dudu23')
-    dudu33 = tke_comp_dict.get('dudu33')
-
-    # Check if all required components are available
-    if any(x is None for x in [dudu11, dudu12, dudu13, dudu22, dudu23, dudu33]):
-        raise ValueError("Missing dissipation correlation data (dudu terms) in XDMF file")
-
-    # Total dissipation: sum of all gradient correlations
-    # ε = -(1/Re) * [⟨(∂u₁/∂x₁)²⟩ + ⟨(∂u₁/∂x₂)²⟩ + ⟨(∂u₁/∂x₃)²⟩ +
-    #                ⟨(∂u₂/∂x₁)²⟩ + ⟨(∂u₂/∂x₂)²⟩ + ⟨(∂u₂/∂x₃)²⟩ +
-    #                ⟨(∂u₃/∂x₁)²⟩ + ⟨(∂u₃/∂x₂)²⟩ + ⟨(∂u₃/∂x₃)²⟩]
-    # The XDMF files store:
-    # dudu11 = sum over j of ⟨(∂u₁/∂xⱼ)²⟩
-    # dudu22 = sum over j of ⟨(∂u₂/∂xⱼ)²⟩
-    # dudu33 = sum over j of ⟨(∂u₃/∂xⱼ)²⟩
-    total_dissipation = dudu11 + dudu22 + dudu33
-
-    dissipation = -(1.0 / Re) * total_dissipation
+    
+    dissipation_tensor = tke_comp_dict['dissipation_tensor']
+    if uiuj == 'total':
+        dissipation = -(2.0 / Re) * np.trace(dissipation_tensor)
+    else:
+        i, j = _parse_component(uiuj)
+        dissipation = -(2.0 / Re) * dissipation_tensor[i, j]  # Dissipation for specific component
 
     return {'dissipation': dissipation}
 
-def compute_convection(mean_velocities, tke_gradients):
+def compute_mean_convection(tke_comp_dict, uiuj='total'):
     """
-    Compute convection term.
-
-    Formula: C = -Uⱼ ∂k/∂xⱼ = -U₁∂k/∂x - U₂∂k/∂y - U₃∂k/∂z
+    Compute mean convection term
+    Formula: -D/Dt<uiuj> = -Uₖ∂<uiuj>/∂xₖ, assuming no change in time.
 
     Args:
-        mean_velocities: Dictionary with 'U1', 'U2', 'U3'
-        tke_gradients: Dictionary with 'dkdx', 'dkdy', 'dkdz'
+        tke_comp_dict: Dictionary from compute_TKE_components
+        uiuj: Reynolds stress component ('uu11', 'uu12', 'uu22', etc.) or 'total'
 
     Returns:
-        float/array: Convection term
+        float/array: Mean Convection term
     """
-    convection = -(mean_velocities['U1'] * tke_gradients['dkdx'] +
-                   mean_velocities['U2'] * tke_gradients['dkdy'] +
-                   mean_velocities['U3'] * tke_gradients['dkdz'])
+    mean_conv_tensor_x1 = tke_comp_dict['mean_conv_tensor_x1']
+    mean_conv_tensor_x2 = tke_comp_dict['mean_conv_tensor_x2']
+    mean_conv_tensor_x3 = tke_comp_dict['mean_conv_tensor_x3']
 
-    return {'convection': convection}
+    if uiuj == 'total':
+        mean_convection = -(mean_conv_tensor_x1 + mean_conv_tensor_x2 + mean_conv_tensor_x3).trace()
+    else:
+        i, j = _parse_component(uiuj)
+        mean_convection = -(mean_conv_tensor_x1[i, j] + mean_conv_tensor_x2[i, j] + mean_conv_tensor_x3[i, j])
 
-def compute_viscous_diffusion(Re, tke_second_derivs):
+    return {'mean_convection': mean_convection}
+
+def compute_turbulent_convection(tke_comp_dict, uiuj='total'):
+
+    turb_conv_tensor_x1 = tke_comp_dict['turb_conv_tensor_x1']
+    turb_conv_tensor_x2 = tke_comp_dict['turb_conv_tensor_x2']
+    turb_conv_tensor_x3 = tke_comp_dict['turb_conv_tensor_x3']
+
+    if uiuj == 'total':
+        turb_convection = -(turb_conv_tensor_x1 + turb_conv_tensor_x2 + turb_conv_tensor_x3).trace()
+    else:        
+        i, j = _parse_component(uiuj)
+        turb_convection = -(turb_conv_tensor_x1[i, j] + turb_conv_tensor_x2[i, j] + turb_conv_tensor_x3[i, j])
+
+    return {'turbulent_convection': turb_convection}
+
+def compute_viscous_diffusion(Re):
     """
     Compute viscous diffusion term for TKE budget.
 
-    Formula: VD = (1/Re) * ∂²k/∂xⱼ² = (1/Re) * (∂²k/∂x² + ∂²k/∂y² + ∂²k/∂z²)
+    Formula: VD = 
 
     Args:
         Re: Reynolds number
-        tke_second_derivs: Dictionary with 'd2kdx2', 'd2kdy2', 'd2kdz2'
 
     Returns:
         float/array: Viscous diffusion term
     """
-    visc_diff = (1.0 / Re) * (tke_second_derivs['d2kdx2'] +
-                               tke_second_derivs['d2kdy2'] +
-                               tke_second_derivs['d2kdz2'])
+    visc_diff = None
 
     return {'viscous_diffusion': visc_diff}
 
@@ -502,25 +568,6 @@ def compute_pressure_transport(pressure_velocity_corr_grads):
 
     return {'pressure_transport': press_transport}
 
-def compute_turbulent_diffusion(triple_corr_grads):
-    """
-    Compute turbulent diffusion term for TKE budget.
-
-    Formula: TD = -(1/2) * ∂⟨u'ᵢu'ᵢu'ⱼ⟩/∂xⱼ
-           = -(1/2) * [∂⟨u'ᵢu'ᵢu'₁⟩/∂x + ∂⟨u'ᵢu'ᵢu'₂⟩/∂y + ∂⟨u'ᵢu'ᵢu'₃⟩/∂z]
-
-    Args:
-        triple_corr_grads: Dictionary with gradients of triple correlations
-                          'd_uiuiu1_dx', 'd_uiuiu2_dy', 'd_uiuiu3_dz'
-
-    Returns:
-        float/array: Turbulent diffusion term
-    """
-    turb_diff = -0.5 * (triple_corr_grads['d_uiuiu1_dx'] +
-                        triple_corr_grads['d_uiuiu2_dy'] +
-                        triple_corr_grads['d_uiuiu3_dz'])
-
-    return {'turbulent_diffusion': turb_diff}
 
 def compute_buoyancy_term():
     return

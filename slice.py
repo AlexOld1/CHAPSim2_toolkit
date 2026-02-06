@@ -637,7 +637,8 @@ def main():
     # Load data from the specific XDMF file
     data, grid_info = ut.parse_xdmf_file(
         config['xdmf_path'],
-        load_all_vars=True
+        load_all_vars=True,
+        output_dim=3
     )
 
     if not data:
