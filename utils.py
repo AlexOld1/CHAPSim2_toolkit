@@ -252,6 +252,9 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, output_dim=1):
                 if output_dim == 1 and len(data_3d.shape) == 3:
                     data = data_3d[data_3d.shape[0]//2, :, data_3d.shape[2]//2].copy()
                     del data_3d
+                elif output_dim == 2 and len(data_3d.shape) == 3:
+                    data = data_3d.mean(axis=0)
+                    del data_3d
                 else:
                     data = data_3d
                 if task_type == 'grid':
@@ -262,7 +265,8 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, output_dim=1):
     return arrays, grid_info
 
 
-def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None, data_types=None):
+def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None, data_types=None,
+                         average_z=False, average_x=False):
     """
     Reads XDMF files and extracts numpy arrays from binary data.
 
@@ -350,7 +354,17 @@ def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None
 
             # Parse the XDMF file
 
-            arrays, file_grid_info = parse_xdmf_file(xdmf_file, load_all_vars=load_all_vars, output_dim=1 if 'tsp_avg' in xdmf_file else 3)
+            # tsp_avg files are already space-averaged by the solver -> always 1D
+            # t_avg/inst files: reduce based on averaging flags
+            if 'tsp_avg' in xdmf_file:
+                output_dim = 1
+            elif average_z and average_x:
+                output_dim = 1
+            elif average_z:
+                output_dim = 2
+            else:
+                output_dim = 3
+            arrays, file_grid_info = parse_xdmf_file(xdmf_file, load_all_vars=load_all_vars, output_dim=output_dim)
 
             if arrays:
                 # Extract file type from filename for prefixing (optional)
@@ -512,11 +526,15 @@ def get_col(case, cases, colours):
         colour = colours[0]
     return colour
 
-def print_flow_info(ux_data, Re_ref, Re_bulk, case, timestep):
+def print_flow_info(ux_data, Re_ref, Re_bulk, case, timestep, y_coords=None):
 
     Re_ref = int(Re_ref)
-    du = ux_data[0, 2] - ux_data[1, 2]
-    dy = ux_data[0, 1] - ux_data[1, 1]
+    if y_coords is not None:
+        du = ux_data[0] - ux_data[1]
+        dy = y_coords[0] - y_coords[1]
+    else:
+        du = ux_data[0, 2] - ux_data[1, 2]
+        dy = ux_data[0, 1] - ux_data[1, 1]
     dudy = du/dy
     tau_w = dudy/Re_ref # this should be ref Re not real bulk Re
     u_tau = np.sqrt(abs(dudy/Re_ref))

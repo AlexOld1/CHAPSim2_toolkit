@@ -46,6 +46,9 @@ class Config:
 
     # TKE Budget options
     tke_budget_on: bool
+    Re_stress_component: str
+    average_z_direction: bool
+    average_x_direction: bool
     tke_production_on: bool
     tke_dissipation_on: bool
     tke_convection_on: bool
@@ -95,6 +98,9 @@ class Config:
             w_prime_sq_on=getattr(config_module, 'w_prime_sq_on', False),
             v_prime_sq_on=getattr(config_module, 'v_prime_sq_on', False),
             tke_budget_on=getattr(config_module, 'tke_budget_on', False),
+            Re_stress_component=getattr(config_module, 'Re_stress_component', 'total'),
+            average_z_direction=getattr(config_module, 'average_z_direction', True),
+            average_x_direction=getattr(config_module, 'average_x_direction', False),
             tke_production_on=getattr(config_module, 'tke_production_on', False),
             tke_dissipation_on=getattr(config_module, 'tke_dissipation_on', False),
             tke_convection_on=getattr(config_module, 'tke_convection_on', False),
@@ -128,6 +134,7 @@ class PlotConfig:
     colors_4: Dict[str, str] = None
     colors_blck: Dict[str, str] = None
     stat_labels: Dict[str, str] = None
+    budget_colors: Dict[str, str] = None
 
     def __post_init__(self):
         if self.colors_1 is None:
@@ -173,6 +180,16 @@ class PlotConfig:
                 'u_prime_v_prime': 'black',
                 'w_prime_sq': 'black',
                 'v_prime_sq': 'black',
+            }
+
+        if self.budget_colors is None:
+            self.budget_colors = {
+                'production': 'red',
+                'dissipation': 'blue',
+                'mean_convection': 'green',
+                'viscous_diffusion': 'orange',
+                'pressure_transport': 'purple',
+                'turbulent_diffusion': 'cyan',
             }
 
         if self.stat_labels is None:
@@ -248,7 +265,9 @@ def create_data_loader(config: Config, data_types: List[str] = None):
             config.folder_path,
             config.cases,
             config.timesteps,
-            data_types=data_types
+            data_types=data_types,
+            average_z=config.average_z_direction,
+            average_x=config.average_x_direction
         )
     elif fmt in ['dat', 'text']:
         print("Using text (.dat) data loader...")
@@ -320,16 +339,20 @@ class TurbulenceTextData:
         return self.data.keys()
 
 class TurbulenceXDMFData:
-    """Manages all data from .xdmf files"""
+    """Manages all data from .xdmf files -- stores native numpy arrays."""
 
-    def __init__(self, folder_path: str, cases: List[str], timesteps: List[str], data_types: List[str] = None):
+    def __init__(self, folder_path: str, cases: List[str], timesteps: List[str],
+                 data_types: List[str] = None, average_z: bool = True, average_x: bool = False):
         self.folder_path = folder_path
         self.cases = cases
         self.timesteps = timesteps
         self.data_types = data_types
+        self.average_z = average_z
+        self.average_x = average_x
         # Nested structure: {case_timestep: {variable: array}}
         self.data: Dict[str, Dict[str, np.ndarray]] = {}
         self.grid_info: Dict = {}
+        self.y_coords: Optional[np.ndarray] = None
 
     def load_all(self) -> None:
         """Load all XDMF files for all cases and timesteps"""
@@ -351,73 +374,35 @@ class TurbulenceXDMFData:
             print(f'No .xdmf files found for {case}, {timestep}')
             return
 
-        # Load the XDMF files (filtered by data_types if specified)
-        arrays, grid_info = ut.xdmf_reader_wrapper(file_names, case=case, timestep=timestep, data_types=self.data_types)
+        # Load the XDMF files with averaging flags
+        arrays, grid_info = ut.xdmf_reader_wrapper(
+            file_names, case=case, timestep=timestep,
+            data_types=self.data_types,
+            average_z=self.average_z, average_x=self.average_x
+        )
 
         if arrays and key in arrays:
             # Store grid info if not already stored
             if not self.grid_info and grid_info:
                 self.grid_info = grid_info
 
-            # Convert 3D XDMF arrays to 2D format expected by statistics code
-            # Format: [index, y_coord, value] matching text file format
-            raw_data = arrays[key]
-            converted_data = {}
-
-            # Get y-coordinates from grid info (node coordinates)
-            y_nodes = grid_info.get('grid_y', None) if grid_info else None
-
-            for var_name, var_array in raw_data.items():
-                if var_array.ndim == 3:
-                    # 3D array (z, y, x) - extract y-profile from averaged data
-                    # For tsp_avg data, values are constant along x and z, so take [0, :, 0]
-                    y_profile = var_array[0, :, 0]
-                    n_points = len(y_profile)
-
-                    # Create 2D array with columns [index, y_coord, value]
-                    converted = np.zeros((n_points, 3))
-                    converted[:, 0] = np.arange(n_points)  # Index
-
-                    # Handle y-coordinates: may need cell centers if data is cell-centered
-                    if y_nodes is not None:
-                        if len(y_nodes) == n_points:
-                            # Node-centered data
-                            converted[:, 1] = y_nodes
-                        elif len(y_nodes) == n_points + 1:
-                            # Cell-centered data - compute cell centers
-                            y_centers = 0.5 * (y_nodes[:-1] + y_nodes[1:])
-                            converted[:, 1] = y_centers
-                        else:
-                            # Fallback to linear spacing
-                            converted[:, 1] = np.linspace(-1, 1, n_points)
+            # Compute y cell-centre coordinates from grid node coordinates
+            if self.y_coords is None and grid_info:
+                y_nodes = grid_info.get('grid_y', None)
+                if y_nodes is not None:
+                    # Determine ny from any data array
+                    sample = next(iter(arrays[key].values()))
+                    ny = sample.shape[0] if sample.ndim >= 1 else len(y_nodes)
+                    if len(y_nodes) == ny + 1:
+                        self.y_coords = 0.5 * (y_nodes[:-1] + y_nodes[1:])
+                    elif len(y_nodes) == ny:
+                        self.y_coords = y_nodes.copy()
                     else:
-                        converted[:, 1] = np.linspace(-1, 1, n_points)  # Default normalized y
+                        self.y_coords = np.linspace(-1, 1, ny)
 
-                    converted[:, 2] = y_profile  # Values
-                    converted_data[var_name] = converted
-
-                elif var_array.ndim == 1:
-                    # Already 1D - create 2D format
-                    n_points = len(var_array)
-                    converted = np.zeros((n_points, 3))
-                    converted[:, 0] = np.arange(n_points)
-                    if y_nodes is not None:
-                        if len(y_nodes) == n_points:
-                            converted[:, 1] = y_nodes
-                        elif len(y_nodes) == n_points + 1:
-                            converted[:, 1] = 0.5 * (y_nodes[:-1] + y_nodes[1:])
-                        else:
-                            converted[:, 1] = np.linspace(-1, 1, n_points)
-                    else:
-                        converted[:, 1] = np.linspace(-1, 1, n_points)
-                    converted[:, 2] = var_array
-                    converted_data[var_name] = converted
-                else:
-                    # Keep as-is for other dimensions
-                    converted_data[var_name] = var_array
-
-            self.data[key] = converted_data
-            print(f"Loaded {len(converted_data)} variables from XDMF files for {case}, {timestep}")
+            # Store arrays as native numpy arrays (no 3-column conversion)
+            self.data[key] = dict(arrays[key])
+            print(f"Loaded {len(self.data[key])} variables from XDMF files for {case}, {timestep}")
         else:
             print(f'No arrays extracted from XDMF files for {case}, {timestep}')
 
@@ -443,6 +428,11 @@ class TurbulenceXDMFData:
         if key in self.data:
             return list(self.data[key].keys())
         return []
+
+    def get_raw_dict(self, case: str, timestep: str) -> Optional[Dict[str, np.ndarray]]:
+        """Get the full data dictionary for a case/timestep (for TKE budget computation)."""
+        key = f"{case}_{timestep}"
+        return self.data.get(key, None)
 
 class ReferenceData:
     """Manages all reference datasets"""
@@ -730,220 +720,109 @@ class TkeBudget(ABC):
         return values[:(len(values)//2)]
 
 
-class TKE_Production(TkeBudget):
+class TkeBudgetComputer:
     """
-    TKE Production term: P = -⟨u'ᵢu'ⱼ⟩ ∂Uᵢ/∂xⱼ
-
-    For fully developed channel flow:
-    - Homogeneity: ∂Uᵢ/∂x = ∂Uᵢ/∂z = 0
-    - Mean velocities: U₁ = U(y), U₂ = 0, U₃ = 0 → only ∂U₁/∂y is non-zero
-    - Dominant term: P ≈ -⟨u'v'⟩ ∂U/∂y
-    - Full expression with all terms computed for numerical accuracy
+    Computes all TKE budget terms by calling op.compute_TKE_components once
+    and then extracting individual terms via op.compute_* functions.
     """
 
-    def __init__(self):
-        super().__init__(
-            'production',
-            'Production',
-            ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu13', 'uu22', 'uu23', 'uu33']
+    # Registry mapping config flags to (op function, key in result dict)
+    TERM_REGISTRY = {
+        'tke_production_on':          ('production',          'Production'),
+        'tke_dissipation_on':         ('dissipation',         'Dissipation'),
+        'tke_convection_on':          ('mean_convection',     'Mean Convection'),
+        'tke_viscous_diffusion_on':   ('viscous_diffusion',   'Viscous Diffusion'),
+        'tke_pressure_transport_on':  ('pressure_transport',  'Pressure Transport'),
+        'tke_turbulent_diffusion_on': ('turbulent_convection','Turbulent Diffusion'),
+    }
+
+    def __init__(self, config: Config):
+        self.config = config
+        self.Re = float(config.Re[0]) if config.Re else 1.0
+        self.uiuj = config.Re_stress_component
+        self.average_z = config.average_z_direction
+        self.average_x = config.average_x_direction
+
+        # Determine which terms are enabled
+        self.enabled_terms = []
+        for flag, (term_name, label) in self.TERM_REGISTRY.items():
+            if config.tke_budget_on or getattr(config, flag, False):
+                self.enabled_terms.append((flag, term_name, label))
+
+        # Storage: {term_name: {(case, timestep): array}}
+        self.raw_results: Dict[str, Dict[Tuple[str, str], np.ndarray]] = {
+            t[1]: {} for t in self.enabled_terms
+        }
+        self.processed_results: Dict[str, Dict[Tuple[str, str], np.ndarray]] = {
+            t[1]: {} for t in self.enabled_terms
+        }
+
+    def compute_for_case(self, case: str, timestep: str, data_loader) -> bool:
+        """Compute all enabled budget terms for one case/timestep."""
+        raw_dict = data_loader.get_raw_dict(case, timestep)
+        if raw_dict is None:
+            print(f"No data for TKE budget: {case}, {timestep}")
+            return False
+
+        y_coords = getattr(data_loader, 'y_coords', None)
+        if y_coords is None:
+            print(f"No y_coords for TKE budget: {case}, {timestep}")
+            return False
+
+        # Compute all TKE components once
+        tke_comp = op.compute_TKE_components(
+            raw_dict, y_coords,
+            average_z=self.average_z, average_x=self.average_x
         )
 
-    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Compute velocity gradients from t_avg data
-        grad_dict = op.compute_velocity_gradients(data_dict)
-        data_dict.update(grad_dict)
-
-        # Build Reynolds stress dictionary for existing compute_production function
-        tke_comp_dict = {
-            'u1p_u1p': data_dict['uu11'][:, 2] - np.square(data_dict['u1'][:, 2]),
-            'u1p_u2p': data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2],
-            'u1p_u3p': data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2],
-            'u2p_u1p': data_dict['uu12'][:, 2] - data_dict['u1'][:, 2] * data_dict['u2'][:, 2],
-            'u2p_u2p': data_dict['uu22'][:, 2] - np.square(data_dict['u2'][:, 2]),
-            'u2p_u3p': data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2],
-            'u3p_u1p': data_dict['uu13'][:, 2] - data_dict['u1'][:, 2] * data_dict['u3'][:, 2],
-            'u3p_u2p': data_dict['uu23'][:, 2] - data_dict['u2'][:, 2] * data_dict['u3'][:, 2],
-            'u3p_u3p': data_dict['uu33'][:, 2] - np.square(data_dict['u3'][:, 2]),
-            # Channel flow: homogeneous in x and z, so ∂/∂x = ∂/∂z = 0
-            'du1dx': np.zeros_like(data_dict['u1'][:, 2]),
-            'du1dy': data_dict['du1dy'][:, 2],
-            'du1dz': np.zeros_like(data_dict['u1'][:, 2]),
-            'du2dx': np.zeros_like(data_dict['u1'][:, 2]),
-            'du2dy': data_dict['du2dy'][:, 2],
-            'du2dz': np.zeros_like(data_dict['u1'][:, 2]),
-            'du3dx': np.zeros_like(data_dict['u1'][:, 2]),
-            'du3dy': data_dict['du3dy'][:, 2],
-            'du3dz': np.zeros_like(data_dict['u1'][:, 2]),
-        }
-        result = op.compute_production(tke_comp_dict)
-        return result['prod_total']
-
-
-class TKE_Dissipation(TkeBudget):
-    """
-    TKE Dissipation term: ε = -(1/Re) ⟨∂u'ᵢ/∂xⱼ ∂u'ᵢ/∂xⱼ⟩
-
-    Represents the conversion of TKE to internal energy through viscous action.
-    """
-
-    def __init__(self, Re: float):
-        super().__init__(
-            'dissipation',
-            'Dissipation',
-            ['dudu11', 'dudu12', 'dudu13', 'dudu22', 'dudu23', 'dudu33']
-        )
-        self.Re = Re
-
-    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Build dictionary with dissipation correlations
-        tke_comp_dict = {
-            'dudu11': data_dict['dudu11'][:, 2],
-            'dudu12': data_dict['dudu12'][:, 2],
-            'dudu13': data_dict['dudu13'][:, 2],
-            'dudu22': data_dict['dudu22'][:, 2],
-            'dudu23': data_dict['dudu23'][:, 2],
-            'dudu33': data_dict['dudu33'][:, 2],
+        # Extract each enabled term
+        _compute_fns = {
+            'production':          lambda d: op.compute_production(d, self.uiuj),
+            'dissipation':         lambda d: op.compute_dissipation(self.Re, d, self.uiuj),
+            'mean_convection':     lambda d: op.compute_mean_convection(d, self.uiuj),
+            'viscous_diffusion':   lambda d: op.compute_viscous_diffusion(self.Re, d, self.uiuj),
+            'pressure_transport':  lambda d: op.compute_pressure_transport(d, self.uiuj),
+            'turbulent_convection':lambda d: op.compute_turbulent_convection(d, self.uiuj),
         }
 
-        result = op.compute_dissipation(self.Re, tke_comp_dict)
-        return result['dissipation']
+        for _flag, term_name, _label in self.enabled_terms:
+            result = _compute_fns[term_name](tke_comp)
+            value = next(iter(result.values()))
+
+            # If 2D (ny, nx), average over x to get 1D profile
+            if isinstance(value, np.ndarray) and value.ndim == 2:
+                value = value.mean(axis=1)
+
+            self.raw_results[term_name][(case, timestep)] = value
+
+        return True
 
 
-class TKE_Convection(TkeBudget):
+class TkeBudgetTerm:
     """
-    TKE Convection (Advection) term: C = -Uⱼ ∂k/∂xⱼ
-
-    Represents the transport of TKE by the mean flow.
-    
-    For fully developed channel flow:
-    - Homogeneity: ∂k/∂x = ∂k/∂z = 0
-    - Mean velocities: U₁ = U(y), U₂ = 0, U₃ = 0
-    - Therefore: C = -U₁·0 - U₂·∂k/∂y - U₃·0 = 0 (since U₂ = 0)
-    
-    Note: We compute -U₂∂k/∂y anyway to account for small numerical deviations from U₂ = 0
-    """
-
-    def __init__(self):
-        super().__init__(
-            'convection',
-            'Convection',
-            ['u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33']
-        )
-
-    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Compute TKE gradients from t_avg data
-        grad_dict = op.compute_tke_gradients(data_dict)
-        data_dict.update(grad_dict)
-
-        # Build gradient dictionary for existing compute_convection function
-        mean_velocities = {
-            'U1': data_dict['u1'][:, 2],
-            'U2': data_dict['u2'][:, 2],
-            'U3': data_dict['u3'][:, 2],
-        }
-        tke_gradients = {
-            'dkdx': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in x
-            'dkdy': data_dict['dkdy'][:, 2],                # Only y-gradient is non-zero
-            'dkdz': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in z
-        }
-        result = op.compute_convection(mean_velocities, tke_gradients)
-        return result['convection']
-
-
-class TKE_ViscousDiffusion(TkeBudget):
-    """
-    TKE Viscous Diffusion term: VD = (1/Re) ∂²k/∂xⱼ²
-
-    Represents the diffusion of TKE by molecular viscosity.
+    Thin wrapper around a single budget term so it looks like a stat object
+    to the pipeline and plotter.
     """
 
-    def __init__(self, Re: float):
-        super().__init__(
-            'viscous_diffusion',
-            'Viscous Diffusion',
-            ['u1', 'u2', 'u3', 'uu11', 'uu22', 'uu33']
-        )
-        self.Re = Re
+    def __init__(self, term_name: str, label: str, computer: TkeBudgetComputer):
+        self.name = term_name
+        self.label = label
+        self._computer = computer
 
-    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Compute TKE gradients from t_avg data
-        grad_dict = op.compute_tke_gradients(data_dict)
-        data_dict.update(grad_dict)
+    @property
+    def raw_results(self):
+        return self._computer.raw_results[self.name]
 
-        # Build second derivative dictionary for existing compute_viscous_diffusion function
-        tke_second_derivs = {
-            'd2kdx2': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in x
-            'd2kdy2': data_dict['d2kdy2'][:, 2],              # Only y-derivative is non-zero
-            'd2kdz2': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in z
-        }
-        result = op.compute_viscous_diffusion(self.Re, tke_second_derivs)
-        return result['viscous_diffusion']
+    @property
+    def processed_results(self):
+        return self._computer.processed_results[self.name]
 
+    @processed_results.setter
+    def processed_results(self, value):
+        self._computer.processed_results[self.name] = value
 
-class TKE_PressureTransport(TkeBudget):
-    """
-    TKE Pressure Transport term: PT = -∂⟨p'u'ⱼ⟩/∂xⱼ
-
-    Represents the redistribution of TKE by pressure fluctuations.
-    Also called pressure diffusion or velocity-pressure gradient correlation.
-    For channel flow: PT = -∂⟨p'v'⟩/∂y (computed from t_avg)
-    """
-
-    def __init__(self):
-        super().__init__(
-            'pressure_transport',
-            'Pressure Transport',
-            ['pr', 'u2', 'pru2']
-        )
-
-    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Compute pressure gradient from t_avg data
-        grad_dict = op.compute_pressure_gradient(data_dict)
-        if not grad_dict:
-            return np.zeros_like(data_dict['u2'][:, 2])
-        data_dict.update(grad_dict)
-
-        # Build gradient dictionary for existing compute_pressure_transport function
-        pressure_velocity_corr_grads = {
-            'd_pu1p_dx': np.zeros_like(data_dict['u2'][:, 2]),  # Channel: homogeneous in x
-            'd_pu2p_dy': data_dict['d_pu2p_dy'][:, 2],          # Only y-derivative is non-zero
-            'd_pu3p_dz': np.zeros_like(data_dict['u2'][:, 2]),  # Channel: homogeneous in z
-        }
-        result = op.compute_pressure_transport(pressure_velocity_corr_grads)
-        return result['pressure_transport']
-
-
-class TKE_TurbulentDiffusion(TkeBudget):
-    """
-    TKE Turbulent Diffusion term: TD = -(1/2) ∂⟨u'ᵢu'ᵢu'ⱼ⟩/∂xⱼ
-
-    Represents the transport of TKE by turbulent velocity fluctuations.
-    Also called turbulent transport.
-    """
-
-    def __init__(self):
-        super().__init__(
-            'turbulent_diffusion',
-            'Turbulent Diffusion',
-            ['u1', 'u2', 'u3', 'uu11', 'uu12', 'uu22', 'uu23', 'uu33',
-             'uuu112', 'uuu222', 'uuu233']
-        )
-
-    def compute(self, data_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        # Compute triple correlation gradient from t_avg data
-        grad_dict = op.compute_triple_correlation_gradient(data_dict)
-        if not grad_dict:
-            return np.zeros_like(data_dict['u1'][:, 2])
-        data_dict.update(grad_dict)
-
-        # Build gradient dictionary for existing compute_turbulent_diffusion function
-        triple_corr_grads = {
-            'd_uiuiu1_dx': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in x
-            'd_uiuiu2_dy': data_dict['d_uiuiu2_dy'][:, 2],        # Only y-derivative is non-zero
-            'd_uiuiu3_dz': np.zeros_like(data_dict['u1'][:, 2]),  # Channel: homogeneous in z
-        }
-        result = op.compute_turbulent_diffusion(triple_corr_grads)
-        return result['turbulent_diffusion']
+    def get_half_domain(self, values: np.ndarray) -> np.ndarray:
+        return values[:(len(values)//2)]
 
 
 # Placeholder classes for future implementation
@@ -1025,41 +904,50 @@ class TurbulenceStatsPipeline:
         if self.config.temp_on:
             self.statistics.append(Temperature(self.config.norm_temp_by_ref_temp, self.config.ref_temp))
 
-        # TKE Budget terms
-        # Get Reynolds number for terms that require it
-        Re = float(self.config.Re[0]) if self.config.Re else 1.0
+        # TKE Budget terms — single computer, thin wrappers per term
+        tke_budget_enabled = (self.config.tke_budget_on or self.config.tke_production_on or
+                              self.config.tke_dissipation_on or self.config.tke_convection_on or
+                              self.config.tke_viscous_diffusion_on or self.config.tke_pressure_transport_on or
+                              self.config.tke_turbulent_diffusion_on)
 
-        if self.config.tke_budget_on or self.config.tke_production_on:
-            self.statistics.append(TKE_Production())
-
-        if self.config.tke_budget_on or self.config.tke_dissipation_on:
-            self.statistics.append(TKE_Dissipation(Re))
-
-        if self.config.tke_budget_on or self.config.tke_convection_on:
-            self.statistics.append(TKE_Convection())
-
-        if self.config.tke_budget_on or self.config.tke_viscous_diffusion_on:
-            self.statistics.append(TKE_ViscousDiffusion(Re))
-
-        if self.config.tke_budget_on or self.config.tke_pressure_transport_on:
-            self.statistics.append(TKE_PressureTransport())
-
-        if self.config.tke_budget_on or self.config.tke_turbulent_diffusion_on:
-            self.statistics.append(TKE_TurbulentDiffusion())
+        self.budget_computer = None
+        if tke_budget_enabled:
+            self.budget_computer = TkeBudgetComputer(self.config)
+            for _flag, term_name, label in self.budget_computer.enabled_terms:
+                self.statistics.append(TkeBudgetTerm(term_name, label, self.budget_computer))
 
     def compute_all(self) -> None:
         """Compute all registered statistics for all cases and timesteps"""
-        total_tasks = len(self.statistics) * len(self.config.cases) * len(self.config.timesteps)
+        # Separate regular stats from budget terms
+        regular_stats = [s for s in self.statistics if not isinstance(s, TkeBudgetTerm)]
+        n_budget = len(self.budget_computer.enabled_terms) if self.budget_computer else 0
+        total_tasks = len(regular_stats) * len(self.config.cases) * len(self.config.timesteps)
+        # Budget: one compute call per case/timestep (covers all terms)
+        total_tasks += len(self.config.cases) * len(self.config.timesteps) if n_budget else 0
+
         with tqdm(total=total_tasks, desc="Computing statistics", unit="stat") as pbar:
-            for stat in self.statistics:
+            # Regular stats
+            for stat in regular_stats:
                 for case in self.config.cases:
                     for timestep in self.config.timesteps:
                         stat.compute_for_case(case, timestep, self.data_loader)
                         pbar.update(1)
 
+            # TKE budget: one call per case/timestep computes all terms
+            if self.budget_computer:
+                for case in self.config.cases:
+                    for timestep in self.config.timesteps:
+                        self.budget_computer.compute_for_case(case, timestep, self.data_loader)
+                        pbar.update(1)
+
     def process_all(self) -> None:
         """Apply normalization and averaging to all computed statistics"""
+        # Detect native-array mode (XDMF loader with y_coords)
+        y_coords = getattr(self.data_loader, 'y_coords', None)
+
         total_tasks = sum(len(stat.raw_results) for stat in self.statistics)
+        printed_info = set()  # only print flow info once per (case, timestep)
+
         with tqdm(total=total_tasks, desc="Processing statistics", unit="stat") as pbar:
             for stat in self.statistics:
                 for (case, timestep), values in stat.raw_results.items():
@@ -1075,13 +963,13 @@ class TurbulenceStatsPipeline:
 
                     # Normalize
                     if self.config.norm_by_u_tau_sq and stat.name != 'temperature':
-                        normed = op.norm_turb_stat_wrt_u_tau_sq(ux_data, values, ref_Re)
+                        normed = op.norm_turb_stat_wrt_u_tau_sq(ux_data, values, ref_Re, y_coords=y_coords)
                     else:
                         normed = values
 
                     # Special normalization for u1 velocity
                     if self.config.norm_ux_by_u_tau and stat.name == 'ux_velocity':
-                        normed = op.norm_ux_velocity_wrt_u_tau(ux_data, ref_Re)
+                        normed = op.norm_ux_velocity_wrt_u_tau(ux_data, ref_Re, y_coords=y_coords)
                         print(f'u1 velocity normalised by u_tau for {case}, {timestep}')
 
                     # Symmetric averaging (skip for u'v')
@@ -1094,9 +982,12 @@ class TurbulenceStatsPipeline:
                     else:
                         stat.processed_results[(case, timestep)] = normed
 
-                    # Print flow info
-                    cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data, self.config.forcing)
-                    ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep)
+                    # Print flow info once per (case, timestep)
+                    if (case, timestep) not in printed_info:
+                        cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data,
+                                           self.config.forcing, y_coords=y_coords)
+                        ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep, y_coords=y_coords)
+                        printed_info.add((case, timestep))
                     pbar.update(1)
 
     def get_statistic(self, name: str) -> Optional[Union[ReStresses, Profiles, TkeBudget]]:
@@ -1106,20 +997,20 @@ class TurbulenceStatsPipeline:
                 return stat
         return None
 
-    def get_statistics_by_class(self) -> Dict[str, List[Union[ReStresses, Profiles, TkeBudget]]]:
+    def get_statistics_by_class(self) -> Dict[str, List]:
         """Group statistics by their class type"""
-        grouped: Dict[str, List[Union[ReStresses, Profiles, TkeBudget]]] = {
+        grouped: Dict[str, List] = {
             'ReStresses': [],
             'Profiles': [],
             'TkeBudget': []
         }
         for stat in self.statistics:
-            if isinstance(stat, ReStresses):
+            if isinstance(stat, TkeBudgetTerm):
+                grouped['TkeBudget'].append(stat)
+            elif isinstance(stat, ReStresses):
                 grouped['ReStresses'].append(stat)
             elif isinstance(stat, Profiles):
                 grouped['Profiles'].append(stat)
-            elif isinstance(stat, TkeBudget):
-                grouped['TkeBudget'].append(stat)
         return grouped
 
 # =====================================================================================================================================================
@@ -1161,13 +1052,20 @@ class TurbulencePlotter:
 
         return figures
 
-    def _plot_class_figure(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]],
-                           title: str, reference_data: Optional[ReferenceData] = None):
-        """Create a figure with subplots for a single class type"""
+    def _plot_class_figure(self, statistics, title: str, reference_data: Optional[ReferenceData] = None):
+        """Create a figure for a single class type.
+        For TkeBudgetTerm stats: all terms on one set of axes.
+        For other stats: subplots as before.
+        """
+        # ---- TKE Budget: all terms on a single axes ----
+        is_budget = all(isinstance(s, TkeBudgetTerm) for s in statistics)
+        if is_budget:
+            return self._plot_budget_figure(statistics, title)
+
+        # ---- Standard subplot layout ----
         n_stats = len(statistics)
 
         if n_stats == 1:
-            # Single subplot
             fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
             fig.canvas.manager.set_window_title(title)
             axs = np.array([[ax]])
@@ -1175,61 +1073,69 @@ class TurbulencePlotter:
         else:
             ncols = math.ceil(math.sqrt(n_stats))
             nrows = math.ceil(n_stats / ncols)
-
-            fig, axs = plt.subplots(
-                nrows=nrows, ncols=ncols, figsize=(15, 10),
-                constrained_layout=True
-            )
+            fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, 10), constrained_layout=True)
             fig.canvas.manager.set_window_title(title)
-
-            # Ensure axs is always 2D array
             if nrows == 1 and ncols == 1:
                 axs = np.array([[axs]])
             elif nrows == 1 or ncols == 1:
                 axs = axs.reshape(nrows, ncols)
 
-        # Plot each statistic
         for i, stat in enumerate(statistics):
             row = i // ncols
             col = i % ncols
             ax = axs[row, col]
 
             for (case, timestep), values in stat.processed_results.items():
-                # Get y coordinates
                 y_plus = self._get_y_plus(case, timestep)
                 if y_plus is None:
                     continue
-
-                # Get plotting aesthetics
                 color = self._get_color(case, stat.name)
                 label = f'{case.replace("_", " = ")}'
-
-                # Plot main data
                 self._plot_line(ax, y_plus, values, label, color)
 
-                # Plot reference data
                 if reference_data:
                     self._plot_reference_data(ax, stat.name, case, reference_data)
-
-                # Add log scale reference lines
                 if stat.name == 'ux_velocity' and self.config.ux_velocity_log_ref_on and self.config.log_y_scale:
                     self._plot_log_reference_lines(ax, y_plus)
 
-            # Set subplot properties
             ax.set_title(f'{stat.label}')
             ax.set_ylabel(f"Normalised {stat.name.replace('_', ' ')}")
             ax.grid(True)
             ax.legend(fontsize='small')
-
             if row == nrows - 1:
                 ax.set_xlabel('$y^+$')
 
-        # Hide unused subplots
         for i in range(n_stats, nrows * ncols):
             row = i // ncols
             col = i % ncols
             axs[row, col].set_visible(False)
 
+        return fig
+
+    def _plot_budget_figure(self, statistics, title: str):
+        """Plot all TKE budget terms on a single axes."""
+        component = self.config.Re_stress_component
+        fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+        fig.canvas.manager.set_window_title(f'{title} ({component})')
+
+        for stat in statistics:
+            color = self.plot_config.budget_colors.get(stat.name, 'black')
+            for (case, timestep), values in stat.processed_results.items():
+                y_plus = self._get_y_plus(case, timestep)
+                if y_plus is None:
+                    continue
+                label = stat.label
+                self._plot_line(ax, y_plus, values, label, color)
+
+        ax.axhline(y=0, color='black', linewidth=0.5, linestyle='--')
+        ax.set_title(f'TKE Budget ({component})')
+        if self.config.norm_y_to_y_plus:
+            ax.set_xlabel('$y^+$')
+        else:
+            ax.set_xlabel('$y$')
+        ax.set_ylabel('Budget term magnitude')
+        ax.grid(True)
+        ax.legend(fontsize='small')
         return fig
 
     def _plot_single_figure(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]],
@@ -1397,29 +1303,41 @@ class TurbulencePlotter:
                    label='$u^+ = 2.5ln(y^+) + 5.5$', color='black', alpha=0.5)
 
     def _get_y_plus(self, case: str, timestep: str) -> Optional[np.ndarray]:
-        """Calculate y+ coordinates for a case"""
+        """Calculate y or y+ coordinates for a case"""
         ux_data = self.data_loader.get(case, 'u1', timestep)
         if ux_data is None:
             print(f'Missing u1 data for plotting: {case}, {timestep}')
             return None
 
-        if self.config.half_channel_plot:
-            y = (ux_data[:len(ux_data)//2, 1] + 1)
+        y_coords = getattr(self.data_loader, 'y_coords', None)
+
+        if y_coords is not None:
+            # Native array mode
+            y = y_coords.copy()
+            if self.config.half_channel_plot:
+                y = y[:len(y)//2] + 1
         else:
-            y = ux_data[:, 1]
+            # Legacy 3-column mode
+            if self.config.half_channel_plot:
+                y = (ux_data[:len(ux_data)//2, 1] + 1)
+            else:
+                y = ux_data[:, 1]
 
         if self.config.norm_y_to_y_plus:
-            cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data, self.config.forcing)
-            return op.norm_y_to_y_plus(y, ux_data, cur_Re)
+            cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data,
+                               self.config.forcing, y_coords=y_coords)
+            return op.norm_y_to_y_plus(y, ux_data, cur_Re, y_coords=y_coords)
         else:
-            y_plus = y
-            return y_plus
+            return y
 
     def _get_color(self, case: str, stat_name: str) -> str:
         """Get colour for a case and statistic"""
+        # Budget terms use dedicated budget color palette
+        if stat_name in self.plot_config.budget_colors:
+            return self.plot_config.budget_colors[stat_name]
         if len(self.config.cases) <= len(self.plot_config.colours) and stat_name in self.plot_config.stat_labels:
             colour_set = ut.get_col(case, self.config.cases, self.plot_config.colours)
-            return colour_set[stat_name]
+            return colour_set.get(stat_name, 'black')
         else:
             return np.random.choice(list(mcolors.CSS4_COLORS.keys()))
 

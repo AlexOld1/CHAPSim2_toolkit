@@ -123,7 +123,7 @@ def extract_y_profile(data_3d, grid_info):
 def compute_reynolds_stresses(data, grid_info):
     """
     Compute Reynolds stresses from time-space averaged data.
-    Handles different naming conventions (u1/ux, uu11/uu, etc.) and prefixes (tsp_avg_, t_avg_)
+    Handles prefixes (tsp_avg_, t_avg_)
     """
     results = {}
 

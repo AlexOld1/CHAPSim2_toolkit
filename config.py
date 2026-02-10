@@ -31,6 +31,9 @@ v_prime_sq_on = True
 
 # TKE Budget terms
 tke_budget_on = True
+Re_stress_component = 'uu11' # 'total' or 'uu11', 'uu12' etc. for individual components
+average_z_direction = True # Averaging valid for periodic directions
+average_x_direction = False
 tke_production_on = True
 tke_dissipation_on = True
 tke_convection_on = True
