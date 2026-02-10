@@ -244,6 +244,11 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, output_dim=1):
         for task_type, name, data_item in tqdm(read_tasks, desc=f"  Reading {xdmf_name}", unit="var", leave=False):
             data_3d = read_binary_data_item(data_item, xdmf_dir)
             if data_3d is not None:
+                # Reshape flat arrays to 3D using topology dimensions if needed
+                if len(data_3d.shape) == 1 and 'cell_dimensions' in grid_info:
+                    cell_dims = grid_info['cell_dimensions']
+                    if data_3d.size == int(np.prod(cell_dims)):
+                        data_3d = data_3d.reshape(cell_dims)
                 if output_dim == 1 and len(data_3d.shape) == 3:
                     data = data_3d[data_3d.shape[0]//2, :, data_3d.shape[2]//2].copy()
                     del data_3d
