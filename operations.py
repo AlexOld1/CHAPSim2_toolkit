@@ -5,21 +5,29 @@ import numpy as np
 # =====================================================================================================================================================
 
 def _extract_val(data):
-    """Return the value array from either native or legacy 3-column [idx, y, val] format."""
+    """Return the value array from either native (1D/2D/3D) or legacy 3-column [idx, y, val] format."""
     if data.ndim == 2 and data.shape[1] == 3:
         return data[:, 2]
     return data
 
 def _compute_u_tau_quantities(ux_data, Re_bulk, y_coords=None):
-    """Compute wall shear stress quantities from near-wall velocity data."""
+    """Compute wall shear stress quantities from near-wall velocity data.
+
+    For nD native arrays the wall gradient is computed from the first two
+    y-indices (axis 0) and then averaged over any remaining axes so that
+    u_tau is a single scalar.
+    """
     Re_bulk = int(Re_bulk)
     if y_coords is not None:
+        # Native array: axis-0 is y.  ux_data[0], ux_data[1] may be 1-D (nx,) or scalar
         du = ux_data[0] - ux_data[1]
         dy = y_coords[0] - y_coords[1]
     else:
         du = ux_data[0, 2] - ux_data[1, 2]
         dy = ux_data[0, 1] - ux_data[1, 1]
     dudy = du / dy
+    # Average over any spatial dims so u_tau is always a scalar
+    dudy = np.mean(dudy)
     tau_w = dudy / Re_bulk
     u_tau_sq = abs(tau_w)
     u_tau = np.sqrt(u_tau_sq)
@@ -37,6 +45,9 @@ def get_Re(case, cases, Re, ux_velocity, flow_forcing, y_coords=None):
          cur_Re = Re[0]
     elif flow_forcing == 'CPG':
         profile = _extract_val(ux_velocity) if y_coords is None else ux_velocity
+        # For nD data, average over non-y axes first to get a 1D profile
+        if profile.ndim > 1:
+            profile = profile.mean(axis=tuple(range(1, profile.ndim)))
         if y_coords is not None:
             y = y_coords
         else:
@@ -512,14 +523,22 @@ def norm_y_to_y_plus(y, ux_data, Re_bulk, y_coords=None):
     return y * u_tau * Re_bulk
 
 def symmetric_average(arr):
-    n = len(arr)
+    """Average the first and second halves of the domain along axis 0.
+
+    Works for 1-D (ny,), 2-D (ny, nx), or 3-D (ny, nx, nz) arrays.
+    """
+    n = arr.shape[0]
     half = n // 2
+    first = arr[:half]
+    second = np.flip(arr, axis=0)[:half]
     if n % 2 == 0:
-        return (arr[:half] + arr[::-1][:half]) / 2
+        return (first + second) / 2
     else:
-        symmetric_avg = (arr[:half] + arr[::-1][:half]) / 2
-        middle = np.array([(arr[half])])
-        return np.concatenate((symmetric_avg, middle))
+        symmetric_avg = (first + second) / 2
+        mid_sl = [slice(None)] * arr.ndim
+        mid_sl[0] = slice(half, half + 1)
+        middle = arr[tuple(mid_sl)]
+        return np.concatenate((symmetric_avg, middle), axis=0)
 
 def window_average(data_t1, data_t2, t1, t2, stat_start_timestep):
     stat_t2 = t2 - stat_start_timestep

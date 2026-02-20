@@ -458,12 +458,12 @@ def parse_variable_selection(var_choice, variables):
     return selected
 
 
-def get_slice_config(data, grid_info):
-    """Get slice configuration from user after data is loaded."""
+def get_slice_config(var_metadata, grid_info):
+    """Get slice configuration from user using pre-parsed variable metadata."""
 
     # List available variables (only 3D)
-    all_variables = get_available_variables(data)
-    variables = [v for v in all_variables if len(data[v].shape) == 3]
+    all_variables = sorted(var_metadata.keys())
+    variables = [v for v in all_variables if len(var_metadata[v].get('shape', ())) == 3]
 
     if not variables:
         print("Error: No 3D variables found in dataset.")
@@ -471,7 +471,7 @@ def get_slice_config(data, grid_info):
 
     print(f"\nAvailable 3D variables ({len(variables)}):")
     for i, var in enumerate(variables):
-        shape = data[var].shape
+        shape = var_metadata[var]['shape']
         print(f"  {i+1:2d}. {var:20s} shape: {shape}")
 
     print("\nSelection options:")
@@ -492,7 +492,7 @@ def get_slice_config(data, grid_info):
     print(f"\nSelected {len(selected_vars)} variable(s): {selected_vars}")
 
     # Get shape from first variable (all should be same for slicing)
-    nz, ny, nx = data[selected_vars[0]].shape
+    nz, ny, nx = var_metadata[selected_vars[0]]['shape']
 
     # Select slice plane
     print("\nSlice planes:")
@@ -631,30 +631,44 @@ def main():
         return
 
     print("\n" + "=" * 60)
-    print(f"Loading {config['xdmf_path']}...")
+    print(f"Reading metadata from {config['xdmf_path']}...")
     print("=" * 60)
 
-    # Load data from the specific XDMF file
-    data, grid_info = ut.parse_xdmf_file(
-        config['xdmf_path'],
-        load_all_vars=True,
-        output_dim=3
-    )
+    # Step 1: Parse XDMF metadata (variable names, shapes, grid coords only)
+    var_metadata, grid_info = ut.parse_xdmf_metadata(config['xdmf_path'])
 
-    if not data:
-        print("Error: No data loaded. Check file paths and timestep.")
+    if not var_metadata:
+        print("Error: No variables found in XDMF file. Check file path and format.")
         return
 
-    print(f"\nLoaded {len(data)} variables")
+    print(f"\nFound {len(var_metadata)} variables (data not yet loaded)")
 
     if grid_info:
         dims = grid_info.get('cell_dimensions', grid_info.get('node_dimensions', 'unknown'))
         print(f"Grid dimensions: {dims}")
 
-    # Get slice configuration
-    slice_config = get_slice_config(data, grid_info)
+    # Step 2: Get slice configuration (variable selection, plane, etc.)
+    slice_config = get_slice_config(var_metadata, grid_info)
     if slice_config is None:
         return
+
+    # Step 3: Load only the selected variables
+    print("\n" + "=" * 60)
+    print(f"Loading {len(slice_config['variables'])} selected variable(s)...")
+    print("=" * 60)
+
+    data = ut.load_xdmf_variables(
+        var_metadata,
+        slice_config['variables'],
+        grid_info=grid_info,
+        output_dim=3
+    )
+
+    if not data:
+        print("Error: Failed to load selected variables.")
+        return
+
+    print(f"\nLoaded {len(data)} variable(s)")
 
     print("\n" + "=" * 60)
     print(f"Generating {len(slice_config['variables'])} slice(s)...")

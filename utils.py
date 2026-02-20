@@ -265,6 +265,227 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, output_dim=1):
     return arrays, grid_info
 
 
+# =====================================================================================================================================================
+# XDMF METADATA PARSING & SELECTIVE LOADING
+# =====================================================================================================================================================
+
+def _extract_data_item_params(data_item, xdmf_dir):
+    """
+    Extract binary read parameters from a DataItem XML element
+    without actually reading the binary file.
+
+    Returns:
+        dict with bin_path, dims, dtype, seek keys, or None if invalid
+    """
+    format_type = data_item.get('Format', 'Binary')
+    if format_type != 'Binary':
+        return None
+
+    dims_str = data_item.get('Dimensions', '')
+    dims = tuple(int(d) for d in dims_str.split()) if dims_str else None
+
+    number_type = data_item.get('NumberType', 'Float')
+    precision = int(data_item.get('Precision', '8'))
+    seek = int(data_item.get('Seek', '0'))
+
+    if number_type == 'Float':
+        dtype = np.float32 if precision == 4 else np.float64
+    elif number_type == 'Int':
+        dtype = np.int32 if precision == 4 else np.int64
+    else:
+        dtype = np.float64
+
+    bin_path_text = data_item.text.strip() if data_item.text else None
+    if bin_path_text is None:
+        return None
+
+    data_dir = os.path.normpath(os.path.join(xdmf_dir, '..', '1_data'))
+    bin_filename = os.path.basename(bin_path_text)
+    bin_path = os.path.join(data_dir, bin_filename)
+
+    if not os.path.isfile(bin_path):
+        return None
+
+    return {
+        'bin_path': bin_path,
+        'dims': dims,
+        'dtype': dtype,
+        'seek': seek,
+    }
+
+
+def _read_binary_from_params(params):
+    """
+    Read binary data using pre-extracted parameters (from _extract_data_item_params).
+
+    Args:
+        params: dict with bin_path, dims, dtype, seek
+
+    Returns:
+        numpy array or None on failure
+    """
+    bin_path = params['bin_path']
+    dims = params['dims']
+    dtype = params['dtype']
+    seek = params['seek']
+
+    try:
+        itemsize = np.dtype(dtype).itemsize
+        if dims:
+            count = int(np.prod(dims))
+        else:
+            file_size = os.path.getsize(bin_path)
+            count = (file_size - seek) // itemsize
+
+        if USE_MMAP_READ:
+            with open(bin_path, 'rb') as f:
+                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+                byte_count = count * itemsize
+                data = np.frombuffer(mm[seek:seek + byte_count], dtype=dtype).copy()
+                mm.close()
+        else:
+            with open(bin_path, 'rb') as f:
+                f.seek(seek)
+                data = np.fromfile(f, dtype=dtype, count=count)
+
+        if dims:
+            expected_size = int(np.prod(dims))
+            if data.size >= expected_size:
+                data = data[:expected_size].reshape(dims)
+            elif data.size < expected_size:
+                print(f"Warning: Data size mismatch for {bin_path} "
+                      f"(got {data.size}, expected {expected_size})")
+
+        return data
+
+    except Exception as e:
+        print(f"Error reading {bin_path}: {e}")
+        return None
+
+
+def parse_xdmf_metadata(xdmf_path):
+    """
+    Parse XDMF file structure and return variable names, shapes, and grid info
+    without loading variable data.  Grid coordinates (small 1D arrays) are loaded.
+
+    Args:
+        xdmf_path: Path to the XDMF file
+
+    Returns:
+        tuple: (var_metadata, grid_info)
+            var_metadata: dict of {name: {'shape': tuple, 'bin_path': str,
+                          'dims': tuple, 'dtype': dtype, 'seek': int}}
+            grid_info: dict with node_dimensions, cell_dimensions,
+                       grid_x, grid_y, grid_z
+    """
+    if not os.path.isfile(xdmf_path):
+        return {}, {}
+
+    try:
+        with open(xdmf_path, 'r') as f:
+            xml_content = f.read()
+        root = ET.fromstring(xml_content)
+    except (ET.ParseError, IOError) as e:
+        print(f"Error parsing {xdmf_path}: {e}")
+        return {}, {}
+
+    var_metadata = {}
+    grid_info = {}
+    xdmf_dir = os.path.dirname(xdmf_path)
+
+    for grid in root.iter('Grid'):
+        # Get topology dimensions
+        for topo in grid.iter('Topology'):
+            dims_str = topo.get('Dimensions')
+            if dims_str:
+                dims = tuple(int(d) for d in dims_str.split())
+                grid_info['node_dimensions'] = dims
+                grid_info['cell_dimensions'] = tuple(d - 1 for d in dims)
+
+        # Load grid coordinates (small 1D arrays — always needed for slicing)
+        for geom in grid.iter('Geometry'):
+            geom_type = geom.get('GeometryType')
+            if geom_type == 'VXVYVZ':
+                data_items = list(geom.iter('DataItem'))
+                coord_names = ['x', 'y', 'z']
+                for i, data_item in enumerate(data_items[:3]):
+                    data = read_binary_data_item(data_item, xdmf_dir)
+                    if data is not None:
+                        grid_info[f'grid_{coord_names[i]}'] = data
+
+        # Extract variable metadata without loading binary data
+        for attribute in grid.iter('Attribute'):
+            name = attribute.get('Name')
+            data_item = attribute.find('DataItem')
+            if data_item is not None:
+                params = _extract_data_item_params(data_item, xdmf_dir)
+                if params is not None:
+                    # Compute effective shape (after potential reshape)
+                    raw_dims = params['dims']
+                    if raw_dims and len(raw_dims) > 1:
+                        params['shape'] = raw_dims
+                    elif 'cell_dimensions' in grid_info:
+                        cell_dims = grid_info['cell_dimensions']
+                        if raw_dims:
+                            size = int(np.prod(raw_dims))
+                        else:
+                            itemsize = np.dtype(params['dtype']).itemsize
+                            file_size = os.path.getsize(params['bin_path'])
+                            size = (file_size - params['seek']) // itemsize
+                        if size == int(np.prod(cell_dims)):
+                            params['shape'] = cell_dims
+                        else:
+                            params['shape'] = raw_dims if raw_dims else (size,)
+                    else:
+                        params['shape'] = raw_dims
+                    var_metadata[name] = params
+
+    return var_metadata, grid_info
+
+
+def load_xdmf_variables(var_metadata, selected_vars, grid_info=None, output_dim=3):
+    """
+    Load specific variables using pre-parsed XDMF metadata.
+
+    Args:
+        var_metadata: dict from parse_xdmf_metadata
+        selected_vars: list of variable names to load
+        grid_info: grid info dict (for reshaping flat arrays)
+        output_dim: desired output dimensions (1, 2, or 3)
+
+    Returns:
+        dict: {variable_name: numpy_array}
+    """
+    arrays = {}
+
+    for name in tqdm(selected_vars, desc="Loading selected variables", unit="var"):
+        if name not in var_metadata:
+            tqdm.write(f"  Variable '{name}' not found in metadata, skipping")
+            continue
+
+        params = var_metadata[name]
+        data = _read_binary_from_params(params)
+        if data is None:
+            continue
+
+        # Reshape flat arrays to 3D using cell dimensions
+        if len(data.shape) == 1 and grid_info and 'cell_dimensions' in grid_info:
+            cell_dims = grid_info['cell_dimensions']
+            if data.size == int(np.prod(cell_dims)):
+                data = data.reshape(cell_dims)
+
+        # Reduce dimensionality if requested
+        if output_dim == 1 and len(data.shape) == 3:
+            data = data[data.shape[0]//2, :, data.shape[2]//2].copy()
+        elif output_dim == 2 and len(data.shape) == 3:
+            data = data.mean(axis=0)
+
+        arrays[name] = data
+        tqdm.write(f"  Loaded {name}: shape {data.shape}")
+
+    return arrays
+
+
 def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None, data_types=None,
                          average_z=False, average_x=False):
     """
@@ -354,10 +575,12 @@ def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None
 
             # Parse the XDMF file
 
-            # tsp_avg files are already space-averaged by the solver -> always 1D
-            # t_avg/inst files: reduce based on averaging flags
+            # tsp_avg files are already space-averaged by the solver in the
+            # z-direction, but the binary data is stored as 3-D (nz=1, ny, nx).
+            # Reduce to 2-D (ny, nx) by default, or 1-D (ny,) when x is also
+            # averaged.  t_avg/inst files use the caller-supplied flags.
             if 'tsp_avg' in xdmf_file:
-                output_dim = 1
+                output_dim = 1 if average_x else 2
             elif average_z and average_x:
                 output_dim = 1
             elif average_z:
@@ -535,12 +758,12 @@ def print_flow_info(ux_data, Re_ref, Re_bulk, case, timestep, y_coords=None):
     else:
         du = ux_data[0, 2] - ux_data[1, 2]
         dy = ux_data[0, 1] - ux_data[1, 1]
-    dudy = du/dy
+    dudy = np.mean(du/dy)  # average over any spatial dims for scalar output
     tau_w = dudy/Re_ref # this should be ref Re not real bulk Re
     u_tau = np.sqrt(abs(dudy/Re_ref))
     Re_tau = u_tau * Re_ref
     print(f'Case: {case}, Timestep: {timestep}')
-    print(f'Re_bulk = {Re_bulk}, u_tau = {u_tau}, tau_w = {tau_w}, Re_tau = {Re_tau}')
+    print(f'Re_bulk = {Re_bulk}, u_tau = {u_tau:.6f}, tau_w = {tau_w:.6e}, Re_tau = {Re_tau:.2f}')
     print('-'*120)
     return
 

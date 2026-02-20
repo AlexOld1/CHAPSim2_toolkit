@@ -22,6 +22,8 @@ ref_temp = [670] # Kelvin
 ux_velocity_on = True
 temp_on = True
 tke_on = True
+slice_coords = '' # Leave blank for streamwise avg or specify x coords for profiles at specific locations, e.g. '0.5,1.0' for profiles at x=0.5 and x=1.0
+surface_plot_on = False # Plot 2D (y,x) surface contour maps of each statistic (requires 2D data, i.e. average_z_direction=True, average_x_direction=False)
 
 # Reynolds stresses
 u_prime_sq_on = True

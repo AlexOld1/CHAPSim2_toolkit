@@ -53,6 +53,7 @@ thermo_on = get_yes_no("Include temperature data?", 'y')
 sample_factor = get_int("Sample factor (plot every nth point)", 10)
 plt_pts = get_yes_no("Plot monitor points?", 'y')
 plt_bulk = get_yes_no("Plot bulk/change history?", 'y')
+display_plots = get_yes_no("Display plots interactively?", 'n')
 
 print("-" * 100)
 print()
@@ -127,6 +128,8 @@ if plt_pts:
         fig.suptitle(f'{file} - Monitor Point Data', fontsize=14)
         fig.tight_layout()
         fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".dat","_plot")}.png', dpi=300, bbox_inches='tight')
+        if display_plots:
+            plt.show()
         plt.close(fig)
 
         print(f'Saved subplot figure for {file}')
@@ -182,7 +185,10 @@ if plt_bulk:
 
             fig.suptitle('Bulk Quantities', fontsize=14)
             fig.tight_layout()
-            fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".log","_plot")}.png', dpi=300)
+            fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".log","_plot")}.png', dpi=300, bbox_inches='tight')
+            if display_plots:
+                plt.show()
+            plt.close(fig)
             print(f'Saved metrics history plot for {file}')
         
         if file == 'domain1_monitor_change_history.log':
@@ -215,7 +221,10 @@ if plt_bulk:
 
             fig.suptitle('Change History', fontsize=14)
             fig.tight_layout()
-            fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".log","_plot")}.png', dpi=300)
+            fig.savefig(f'{path}{file.replace("domain1_monitor_","").replace(".log","_plot")}.png', dpi=300, bbox_inches='tight')
+            if display_plots:
+                plt.show()
+            plt.close(fig)
             print(f'Saved change history plot for {file}')
 
 print('='*100)

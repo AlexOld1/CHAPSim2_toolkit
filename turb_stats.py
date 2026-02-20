@@ -43,6 +43,8 @@ class Config:
     u_prime_v_prime_on: bool
     w_prime_sq_on: bool
     v_prime_sq_on: bool
+    slice_coords: str
+    surface_plot_on: bool
 
     # TKE Budget options
     tke_budget_on: bool
@@ -97,6 +99,8 @@ class Config:
             u_prime_v_prime_on=getattr(config_module, 'u_prime_v_prime_on', False),
             w_prime_sq_on=getattr(config_module, 'w_prime_sq_on', False),
             v_prime_sq_on=getattr(config_module, 'v_prime_sq_on', False),
+            slice_coords=getattr(config_module, 'slice_coords', ''),
+            surface_plot_on=getattr(config_module, 'surface_plot_on', False),
             tke_budget_on=getattr(config_module, 'tke_budget_on', False),
             Re_stress_component=getattr(config_module, 'Re_stress_component', 'total'),
             average_z_direction=getattr(config_module, 'average_z_direction', True),
@@ -353,6 +357,7 @@ class TurbulenceXDMFData:
         self.data: Dict[str, Dict[str, np.ndarray]] = {}
         self.grid_info: Dict = {}
         self.y_coords: Optional[np.ndarray] = None
+        self.x_coords: Optional[np.ndarray] = None
 
     def load_all(self) -> None:
         """Load all XDMF files for all cases and timesteps"""
@@ -386,19 +391,31 @@ class TurbulenceXDMFData:
             if not self.grid_info and grid_info:
                 self.grid_info = grid_info
 
-            # Compute y cell-centre coordinates from grid node coordinates
+            # Compute cell-centre coordinates from grid node coordinates
+            sample = next(iter(arrays[key].values()))
+
             if self.y_coords is None and grid_info:
                 y_nodes = grid_info.get('grid_y', None)
                 if y_nodes is not None:
-                    # Determine ny from any data array
-                    sample = next(iter(arrays[key].values()))
-                    ny = sample.shape[0] if sample.ndim >= 1 else len(y_nodes)
+                    # y is always axis 0 for native arrays
+                    ny = sample.shape[0]
                     if len(y_nodes) == ny + 1:
                         self.y_coords = 0.5 * (y_nodes[:-1] + y_nodes[1:])
                     elif len(y_nodes) == ny:
                         self.y_coords = y_nodes.copy()
                     else:
                         self.y_coords = np.linspace(-1, 1, ny)
+
+            if self.x_coords is None and grid_info:
+                x_nodes = grid_info.get('grid_x', None)
+                if x_nodes is not None and sample.ndim >= 2:
+                    nx = sample.shape[1]  # axis 1 is x for 2-D (ny, nx)
+                    if len(x_nodes) == nx + 1:
+                        self.x_coords = 0.5 * (x_nodes[:-1] + x_nodes[1:])
+                    elif len(x_nodes) == nx:
+                        self.x_coords = x_nodes.copy()
+                    else:
+                        self.x_coords = np.linspace(x_nodes.min(), x_nodes.max(), nx)
 
             # Store arrays as native numpy arrays (no 3-column conversion)
             self.data[key] = dict(arrays[key])
@@ -789,10 +806,6 @@ class TkeBudgetComputer:
             result = _compute_fns[term_name](tke_comp)
             value = next(iter(result.values()))
 
-            # If 2D (ny, nx), average over x to get 1D profile
-            if isinstance(value, np.ndarray) and value.ndim == 2:
-                value = value.mean(axis=1)
-
             self.raw_results[term_name][(case, timestep)] = value
 
         return True
@@ -941,7 +954,11 @@ class TurbulenceStatsPipeline:
                         pbar.update(1)
 
     def process_all(self) -> None:
-        """Apply normalization and averaging to all computed statistics"""
+        """Apply normalization and averaging to all computed statistics.
+
+        Data is kept in its native dimensionality (1-D, 2-D, or 3-D).
+        Plane extraction / x-averaging happens at plot time.
+        """
         # Detect native-array mode (XDMF loader with y_coords)
         y_coords = getattr(self.data_loader, 'y_coords', None)
 
@@ -961,7 +978,7 @@ class TurbulenceStatsPipeline:
 
                     ref_Re = op.get_ref_Re(case, self.config.cases, self.config.Re)
 
-                    # Normalize
+                    # Normalize (element-wise — works for any ndim)
                     if self.config.norm_by_u_tau_sq and stat.name != 'temperature':
                         normed = op.norm_turb_stat_wrt_u_tau_sq(ux_data, values, ref_Re, y_coords=y_coords)
                     else:
@@ -972,13 +989,14 @@ class TurbulenceStatsPipeline:
                         normed = op.norm_ux_velocity_wrt_u_tau(ux_data, ref_Re, y_coords=y_coords)
                         print(f'u1 velocity normalised by u_tau for {case}, {timestep}')
 
-                    # Symmetric averaging (skip for u'v')
+                    # Symmetric averaging along axis 0 (wall-normal direction)
                     if self.config.half_channel_plot:
+                        half = normed.shape[0] // 2
                         if stat.name != 'u_prime_v_prime' and stat.name != 'temperature':
                             normed_avg = op.symmetric_average(normed)
                             stat.processed_results[(case, timestep)] = normed_avg
                         else:
-                            stat.processed_results[(case, timestep)] = normed[:(len(normed)//2)]
+                            stat.processed_results[(case, timestep)] = normed[:half]
                     else:
                         stat.processed_results[(case, timestep)] = normed
 
@@ -1018,13 +1036,69 @@ class TurbulenceStatsPipeline:
 # =====================================================================================================================================================
 
 class TurbulencePlotter:
-    """Handles all plotting logic for turbulence statistics"""
+    """Handles all plotting logic for turbulence statistics.
+
+    Processed data may be 1-D (ny,) or 2-D (ny, nx).  Plane extraction
+    happens at plot-time via ``_extract_profiles``:
+      * If the data is already 1-D it is used directly.
+      * If ``slice_coords`` is set, profiles are extracted at the
+        nearest x-index for each requested coordinate.
+      * Otherwise the data is averaged over the x-direction (axis 1)
+        to produce a single 1-D profile (default behaviour).
+    """
 
     def __init__(self, config: Config, plot_config: PlotConfig, data_loader: TurbulenceTextData):
         self.config = config
         self.plot_config = plot_config
         self.data_loader = data_loader
+        self._slice_indices: Optional[List[Tuple[int, float]]] = None  # (index, actual_x)
 
+    # ------------------------------------------------------------------
+    # Plane / profile extraction helpers
+    # ------------------------------------------------------------------
+    def _parse_slice_coords(self) -> List[float]:
+        """Parse the comma-separated ``slice_coords`` config string."""
+        if not self.config.slice_coords or not self.config.slice_coords.strip():
+            return []
+        return [float(s.strip()) for s in self.config.slice_coords.split(',') if s.strip()]
+
+    def _get_slice_indices(self) -> List[Tuple[int, float]]:
+        """Return list of (x-index, actual_x_value) for requested slices."""
+        if self._slice_indices is not None:
+            return self._slice_indices
+
+        x_coords = getattr(self.data_loader, 'x_coords', None)
+        requested = self._parse_slice_coords()
+        if not requested or x_coords is None:
+            self._slice_indices = []
+            return self._slice_indices
+
+        indices = []
+        for xc in requested:
+            idx = int(np.argmin(np.abs(x_coords - xc)))
+            indices.append((idx, float(x_coords[idx])))
+        self._slice_indices = indices
+        return self._slice_indices
+
+    def _extract_profiles(self, values: np.ndarray) -> List[Tuple[str, np.ndarray]]:
+        """Extract 1-D wall-normal profiles from (possibly 2-D) data.
+
+        Returns a list of ``(label_suffix, profile_1d)`` tuples.
+        For 1-D input the suffix is an empty string.
+        """
+        if values.ndim == 1:
+            return [('', values)]
+
+        slices = self._get_slice_indices()
+        if slices:
+            return [(f' x={xv:.3g}', values[:, idx]) for idx, xv in slices]
+        else:
+            # Default: average over x
+            return [(' (x-avg)', values.mean(axis=1))]
+
+    # ------------------------------------------------------------------
+    # Public entry points
+    # ------------------------------------------------------------------
     def plot(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]], reference_data: Optional[ReferenceData] = None):
         """Main plotting method - delegates to single or multi plot"""
         if len(statistics) == 1 or not self.config.multi_plot:
@@ -1034,7 +1108,11 @@ class TurbulencePlotter:
 
     def plot_by_class(self, grouped_statistics: Dict[str, List[Union[ReStresses, Profiles, TkeBudget]]],
                       reference_data: Optional[ReferenceData] = None) -> Dict[str, Any]:
-        """Create separate figures for each class type (ReStresses, Profiles, TkeBudget)"""
+        """Create separate figures for each class type (ReStresses, Profiles, TkeBudget).
+
+        When ``surface_plot_on`` is enabled and data is 2-D, an additional
+        set of surface (contour) figures is produced.
+        """
         figures = {}
 
         class_titles = {
@@ -1047,8 +1125,15 @@ class TurbulencePlotter:
             if not stats_list:
                 continue
 
+            # Standard 1-D profile figures
             fig = self._plot_class_figure(stats_list, class_titles[class_name], reference_data)
             figures[class_name] = fig
+
+            # Optional 2-D surface contour figures
+            if self.config.surface_plot_on:
+                surf_figs = self._plot_surface_figures(stats_list, class_titles[class_name])
+                for key, sfig in surf_figs.items():
+                    figures[key] = sfig
 
         return figures
 
@@ -1056,6 +1141,9 @@ class TurbulencePlotter:
         """Create a figure for a single class type.
         For TkeBudgetTerm stats: all terms on one set of axes.
         For other stats: subplots as before.
+
+        2-D data is reduced to 1-D profiles via ``_extract_profiles`` before
+        plotting (either x-averaged or at specific slice coordinates).
         """
         # ---- TKE Budget: all terms on a single axes ----
         is_budget = all(isinstance(s, TkeBudgetTerm) for s in statistics)
@@ -1089,9 +1177,12 @@ class TurbulencePlotter:
                 y_plus = self._get_y_plus(case, timestep)
                 if y_plus is None:
                     continue
-                color = self._get_color(case, stat.name)
-                label = f'{case.replace("_", " = ")}'
-                self._plot_line(ax, y_plus, values, label, color)
+
+                profiles = self._extract_profiles(values)
+                for suffix, profile in profiles:
+                    color = self._get_color(case, stat.name)
+                    label = f'{case.replace("_", " = ")}{suffix}'
+                    self._plot_line(ax, y_plus, profile, label, color)
 
                 if reference_data:
                     self._plot_reference_data(ax, stat.name, case, reference_data)
@@ -1124,8 +1215,10 @@ class TurbulencePlotter:
                 y_plus = self._get_y_plus(case, timestep)
                 if y_plus is None:
                     continue
-                label = stat.label
-                self._plot_line(ax, y_plus, values, label, color)
+                profiles = self._extract_profiles(values)
+                for suffix, profile in profiles:
+                    label = f'{stat.label}{suffix}'
+                    self._plot_line(ax, y_plus, profile, label, color)
 
         ax.axhline(y=0, color='black', linewidth=0.5, linestyle='--')
         ax.set_title(f'TKE Budget ({component})')
@@ -1152,12 +1245,14 @@ class TurbulencePlotter:
                 if y_plus is None:
                     continue
 
-                # Get plotting aesthetics
-                color = self._get_color(case, stat.name)
-                label = f'{stat.label}, {case.replace("_", " = ")}'
+                profiles = self._extract_profiles(values)
+                for suffix, profile in profiles:
+                    # Get plotting aesthetics
+                    color = self._get_color(case, stat.name)
+                    label = f'{stat.label}, {case.replace("_", " = ")}{suffix}'
 
-                # Plot main data
-                self._plot_line(plt, y_plus, values, label, color)
+                    # Plot main data
+                    self._plot_line(plt, y_plus, profile, label, color)
 
                 # Plot reference data
                 if reference_data:
@@ -1211,12 +1306,14 @@ class TurbulencePlotter:
                 if y_plus is None:
                     continue
 
-                # Get plotting aesthetics
-                color = self._get_color(case, stat.name)
-                label = f'{case.replace("_", " = ")}'
+                profiles = self._extract_profiles(values)
+                for suffix, profile in profiles:
+                    # Get plotting aesthetics
+                    color = self._get_color(case, stat.name)
+                    label = f'{case.replace("_", " = ")}{suffix}'
 
-                # Plot main data
-                self._plot_line(ax, y_plus, values, label, color)
+                    # Plot main data
+                    self._plot_line(ax, y_plus, profile, label, color)
 
                 # Plot reference data
                 if reference_data:
@@ -1242,6 +1339,46 @@ class TurbulencePlotter:
             axs[row, col].set_visible(False)
 
         return fig
+
+    # ------------------------------------------------------------------
+    # 2-D surface (contour) plotting
+    # ------------------------------------------------------------------
+    def _plot_surface_figures(self, statistics, title: str) -> Dict[str, Any]:
+        """Create filled-contour figures for each statistic that has 2-D data.
+
+        Returns a dict ``{key: fig}`` where *key* encodes the class and
+        stat name, suitable for passing to ``save_figure``.
+        """
+        x_coords = getattr(self.data_loader, 'x_coords', None)
+        y_coords = getattr(self.data_loader, 'y_coords', None)
+        if x_coords is None or y_coords is None:
+            return {}
+
+        figures: Dict[str, Any] = {}
+
+        for stat in statistics:
+            for (case, timestep), values in stat.processed_results.items():
+                if values.ndim < 2:
+                    continue  # nothing to surface-plot
+
+                y = y_coords.copy()
+                if self.config.half_channel_plot:
+                    y = y[:values.shape[0]]
+
+                X, Y = np.meshgrid(x_coords, y)
+
+                fig, ax = plt.subplots(figsize=(12, 5), constrained_layout=True)
+                cf = ax.contourf(X, Y, values, levels=64, cmap='RdBu_r')
+                fig.colorbar(cf, ax=ax, label=stat.label)
+                ax.set_xlabel('$x$')
+                ax.set_ylabel('$y$')
+                ax.set_title(f'{stat.label}  ({case}, t={timestep})')
+                fig.canvas.manager.set_window_title(f'{title} - {stat.label} surface')
+
+                key = f'{stat.name}_surface_{case}_{timestep}'
+                figures[key] = fig
+
+        return figures
 
     def _plot_line(self, ax, x: np.ndarray, y: np.ndarray, label: str, color: str) -> None:
         """Plot a single line with appropriate scale"""
