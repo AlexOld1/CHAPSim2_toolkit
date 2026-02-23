@@ -760,6 +760,85 @@ def main():
     print("Complete!")
     print("=" * 60)
 
+    # Ask user whether to plot another or exit
+    while True:
+        choice = input("\nPlot another slice? (y/n): ").strip().lower()
+        if choice in ('y', 'yes'):
+            slice_config = get_slice_config(var_metadata, grid_info)
+            if slice_config is None:
+                continue
+
+            # Load selected variables
+            data = ut.load_xdmf_variables(
+                var_metadata,
+                slice_config['variables'],
+                grid_info=grid_info,
+                output_dim=3
+            )
+            if not data:
+                print("Error: Failed to load selected variables.")
+                continue
+
+            slice_loc = get_slice_location(grid_info, slice_config['plane'], slice_config['index'])
+            if slice_config['plane'] == 'xy':
+                slice_info = f"(z = {slice_loc:.4f})" if isinstance(slice_loc, float) else f"(z index = {slice_loc})"
+            elif slice_config['plane'] == 'xz':
+                slice_info = f"(y = {slice_loc:.4f})" if isinstance(slice_loc, float) else f"(y index = {slice_loc})"
+            else:
+                slice_info = f"(x = {slice_loc:.4f})" if isinstance(slice_loc, float) else f"(x index = {slice_loc})"
+
+            if slice_config['combined_plot']:
+                slices_data = []
+                coord1, coord2, axis_labels = None, None, None
+                for variable in tqdm(slice_config['variables'], desc="Extracting", unit="var"):
+                    var_data = data[variable]
+                    slice_data, coord1, coord2, axis_labels = extract_slice(
+                        var_data, slice_config['plane'], slice_config['index'], grid_info
+                    )
+                    if slice_config['x_crop'] is not None and slice_config['plane'] in ['xy', 'xz']:
+                        slice_data, coord1 = apply_x_crop(slice_data, coord1, slice_config['x_crop'])
+                    slices_data.append((variable, slice_data))
+                    print(f"\n{variable}: min={np.nanmin(slice_data):.4e}, max={np.nanmax(slice_data):.4e}, mean={np.nanmean(slice_data):.4e}")
+
+                save_path = None
+                if slice_config['save_fig'] and slice_config['save_dir']:
+                    filename = f"combined_{slice_config['plane']}_slice.png"
+                    save_path = os.path.join(slice_config['save_dir'], filename)
+                plot_combined_slices(
+                    slices_data, coord1, coord2, axis_labels, slice_info,
+                    cmap=slice_config['cmap'], symmetric=slice_config['symmetric'],
+                    shared_scale=slice_config['shared_scale'], save_path=save_path,
+                    display=slice_config['display']
+                )
+            else:
+                for variable in tqdm(slice_config['variables'], desc="Plotting", unit="var"):
+                    var_data = data[variable]
+                    slice_data, coord1, coord2, axis_labels = extract_slice(
+                        var_data, slice_config['plane'], slice_config['index'], grid_info
+                    )
+                    if slice_config['x_crop'] is not None and slice_config['plane'] in ['xy', 'xz']:
+                        slice_data, coord1 = apply_x_crop(slice_data, coord1, slice_config['x_crop'])
+                    save_path = None
+                    if slice_config['save_fig'] and slice_config['save_dir']:
+                        filename = f"{variable}_{slice_config['plane']}_slice.png"
+                        save_path = os.path.join(slice_config['save_dir'], filename)
+                    plot_slice(
+                        slice_data, coord1, coord2, axis_labels, variable,
+                        cmap=slice_config['cmap'], vmin=slice_config['vmin'],
+                        vmax=slice_config['vmax'], symmetric=slice_config['symmetric'],
+                        slice_info=slice_info, save_path=save_path,
+                        display=slice_config['display']
+                    )
+
+            print("\n" + "=" * 60)
+            print("Complete!")
+            print("=" * 60)
+        elif choice in ('n', 'no', ''):
+            print("Exiting.")
+            break
+        else:
+            print("Please enter 'y' or 'n'.")
+
 
 if __name__ == '__main__':
     main()
