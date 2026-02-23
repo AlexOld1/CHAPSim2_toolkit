@@ -43,6 +43,42 @@ for prefix in ['tsp_avg_', 't_avg_']:
     REQUIRED_VARS.update(f'{prefix}{var}' for var in _BASE_REQUIRED_VARS)
 
 # =====================================================================================================================================================
+# XML PARSING HELPER
+# =====================================================================================================================================================
+
+def _parse_xdmf_xml(xml_content, xdmf_path=""):
+    """
+    Parse XDMF XML content, handling files that have been appended
+    (multiple root elements).
+
+    When a simulation appends to an existing XDMF file, the result is
+    multiple consecutive <Xdmf>...</Xdmf> blocks, which is not valid XML.
+    This function wraps them in a synthetic root and returns the *last*
+    <Xdmf> element (the most recent write).
+
+    Returns:
+        ET.Element: The root element to iterate over, or None on failure.
+    """
+    try:
+        return ET.fromstring(xml_content)
+    except ET.ParseError:
+        pass
+
+    # Likely multiple root elements — wrap in a synthetic root and take the last entry
+    try:
+        wrapped = f"<_wrapper>{xml_content}</_wrapper>"
+        wrapper = ET.fromstring(wrapped)
+        xdmf_elements = list(wrapper)
+        if xdmf_elements:
+            print(f"Note: {os.path.basename(xdmf_path)} contains {len(xdmf_elements)} "
+                  f"appended entries — using the last one.")
+            return xdmf_elements[-1]
+    except ET.ParseError as e:
+        print(f"Error parsing {xdmf_path} (even after handling appended entries): {e}")
+
+    return None
+
+# =====================================================================================================================================================
 # TEXT DATA UTILITIES
 # =====================================================================================================================================================
 
@@ -191,12 +227,12 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, output_dim=1):
         # This avoids ET.parse() holding file locks on Lustre filesystems
         with open(xdmf_path, 'r') as f:
             xml_content = f.read()
-        root = ET.fromstring(xml_content)
-    except ET.ParseError as e:
-        print(f"Error parsing {xdmf_path}: {e}")
-        return {}, {}
     except IOError as e:
         print(f"Error reading {xdmf_path}: {e}")
+        return {}, {}
+
+    root = _parse_xdmf_xml(xml_content, xdmf_path)
+    if root is None:
         return {}, {}
 
     arrays = {}
@@ -384,9 +420,12 @@ def parse_xdmf_metadata(xdmf_path):
     try:
         with open(xdmf_path, 'r') as f:
             xml_content = f.read()
-        root = ET.fromstring(xml_content)
-    except (ET.ParseError, IOError) as e:
-        print(f"Error parsing {xdmf_path}: {e}")
+    except IOError as e:
+        print(f"Error reading {xdmf_path}: {e}")
+        return {}, {}
+
+    root = _parse_xdmf_xml(xml_content, xdmf_path)
+    if root is None:
         return {}, {}
 
     var_metadata = {}
