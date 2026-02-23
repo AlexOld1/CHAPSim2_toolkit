@@ -65,8 +65,11 @@ def _parse_xdmf_xml(xml_content, xdmf_path=""):
         pass
 
     # Likely multiple root elements — wrap in a synthetic root and take the last entry
+    # Strip XML declarations (<?xml ...?>) which are only valid at the document start
+    import re
+    cleaned = re.sub(r'<\?xml[^?]*\?>', '', xml_content)
     try:
-        wrapped = f"<_wrapper>{xml_content}</_wrapper>"
+        wrapped = f"<_wrapper>{cleaned}</_wrapper>"
         wrapper = ET.fromstring(wrapped)
         xdmf_elements = list(wrapper)
         if xdmf_elements:
