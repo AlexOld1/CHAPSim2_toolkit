@@ -302,6 +302,30 @@ def compute_TKE_components(xdmf_data_dict, y_coords, average_z=False, average_x=
     press_velocity_fluc_grad_tensor = np.array(press_grad)
 
     # ------------------------------------------------------------------
+    # Pressure-strain correlation tensor  ⟨p' ∂u'ᵢ/∂xⱼ⟩
+    #   = ⟨p ∂uᵢ/∂xⱼ⟩ − ⟨p⟩ ∂⟨uᵢ⟩/∂xⱼ
+    # Input variables named 'pdudx_ij' store the raw ⟨p ∂uᵢ/∂xⱼ⟩.
+    # ------------------------------------------------------------------
+    pdudx_names = {(i, j): f'pdudx_{i+1}{j+1}' for i in range(3) for j in range(3)}
+
+    pdudx_prime = {}
+    for (i, j), name in pdudx_names.items():
+        raw = get_var(name)
+        if raw is not None and pr is not None and du_dx[i][j] is not None:
+            pdudx_prime[i, j] = raw - pr * du_dx[i][j]
+        elif raw is not None:
+            pdudx_prime[i, j] = raw
+        else:
+            pdudx_prime[i, j] = None
+
+    _z = np.zeros_like(u1) if u1 is not None else None
+    pressure_strain_tensor = np.array([
+        [pdudx_prime.get((0,0), _z), pdudx_prime.get((0,1), _z), pdudx_prime.get((0,2), _z)],
+        [pdudx_prime.get((1,0), _z), pdudx_prime.get((1,1), _z), pdudx_prime.get((1,2), _z)],
+        [pdudx_prime.get((2,0), _z), pdudx_prime.get((2,1), _z), pdudx_prime.get((2,2), _z)],
+    ])
+
+    # ------------------------------------------------------------------
     # Dissipation tensor  ⟨(∂u'ᵢ/∂xₖ)(∂u'ⱼ/∂xₖ)⟩
     # ------------------------------------------------------------------
     dudu_names = {(0,0): 'dudu11', (0,1): 'dudu12', (0,2): 'dudu13',
@@ -398,6 +422,7 @@ def compute_TKE_components(xdmf_data_dict, y_coords, average_z=False, average_x=
         'turb_conv_tensor_x2': turb_conv_tensor_x2,
         'turb_conv_tensor_x3': turb_conv_tensor_x3,
         'dissipation_tensor': dissipation_tensor,
+        'pressure_strain_tensor': pressure_strain_tensor,
         'mean_conv_tensor_x1': mean_conv_tensor_x1,
         'mean_conv_tensor_x2': mean_conv_tensor_x2,
         'mean_conv_tensor_x3': mean_conv_tensor_x3,
@@ -489,14 +514,20 @@ def compute_pressure_transport(tke_comp_dict, uiuj='total'):
         return {'pressure_transport': -(P[i, j] + P[j, i])}
 
 def compute_pressure_strain(tke_comp_dict, uiuj='total'):
-    """Pressure strain: ⟨p'(∂u'_i/∂x_j + ∂u'_j/∂x_i)⟩"""
-    pr_prime = tke_comp_dict['pr_prime']
-    G = tke_comp_dict['fluc_velocity_grad_tensor']
+    """
+    Pressure strain: Π_ij = ⟨p'(∂u'_i/∂x_j + ∂u'_j/∂x_i)⟩
+
+    Uses the pressure_strain_tensor S[i,j] = ⟨p' ∂u'_i/∂x_j⟩
+    so that Π_ij = S[i,j] + S[j,i].
+    For total (trace): Π_kk = 2 * trace(S) = 2⟨p' ∂u'_k/∂x_k⟩ = 0
+    by incompressibility (∂u'_k/∂x_k = 0).
+    """
+    S = tke_comp_dict['pressure_strain_tensor']
     if uiuj == 'total':
-        return {'pressure_strain': 0}
+        return {'pressure_strain': 2.0 * np.einsum('ii...->...', S)}
     else:
         i, j = _parse_component(uiuj)
-        return {'pressure_strain': pr_prime * (G[i, j] + G[j, i])}
+        return {'pressure_strain': S[i, j] + S[j, i]}
 
 def compute_buoyancy_term():
     return
