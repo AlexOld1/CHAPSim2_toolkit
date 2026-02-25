@@ -428,6 +428,10 @@ def compute_TKE_components(xdmf_data_dict, y_coords, average_z=False, average_x=
         'mean_conv_tensor_x3': mean_conv_tensor_x3,
     }
 
+def compute_TKE_components_thermo(xdmf_data_dict, y_coords, average_z=False, average_x=False):
+    """Compute additional TKE budget components for quantities with favre averaging"""
+
+    return {}
 
 # =====================================================================================================================================================
 # Budget term extraction functions (dimension-agnostic on (3,3,...) tensors)
