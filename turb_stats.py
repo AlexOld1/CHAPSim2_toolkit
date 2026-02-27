@@ -43,7 +43,9 @@ class Config:
     u_prime_v_prime_on: bool
     w_prime_sq_on: bool
     v_prime_sq_on: bool
+    profile_direction: str
     slice_coords: str
+    x_profile_y_coords: str
     surface_plot_on: bool
 
     # TKE Budget options
@@ -99,7 +101,9 @@ class Config:
             u_prime_v_prime_on=getattr(config_module, 'u_prime_v_prime_on', False),
             w_prime_sq_on=getattr(config_module, 'w_prime_sq_on', False),
             v_prime_sq_on=getattr(config_module, 'v_prime_sq_on', False),
+            profile_direction=getattr(config_module, 'profile_direction', 'y'),
             slice_coords=getattr(config_module, 'slice_coords', ''),
+            x_profile_y_coords=getattr(config_module, 'x_profile_y_coords', ''),
             surface_plot_on=getattr(config_module, 'surface_plot_on', False),
             tke_budget_on=getattr(config_module, 'tke_budget_on', False),
             Re_stress_component=getattr(config_module, 'Re_stress_component', 'total'),
@@ -243,27 +247,32 @@ def create_data_loader(config: Config, data_types: List[str] = None):
     fmt = config.input_format.lower()
 
     if fmt in ['xdmf', 'visu']:
-        # Determine which data types to load based on enabled features
-        tke_budget_enabled = (config.tke_budget_on or config.tke_production_on or 
-                              config.tke_dissipation_on or config.tke_convection_on or 
-                              config.tke_viscous_diffusion_on or config.tke_pressure_transport_on or 
-                              config.tke_turbulent_diffusion_on)
-        
+        # Build data_types from what is actually enabled so we don't try
+        # to read files that may not exist (e.g. t_avg / tsp_avg when only
+        # instantaneous data is available).
         if data_types is None:
-            if tke_budget_enabled:
-                # For TKE budget, we need t_avg (for gradients) and tsp_avg (for dissipation dudu terms)
-                # Load both to ensure all data is available
-                data_types = ['t_avg', 'tsp_avg']
-            else:
-                # For regular statistics only, use tsp_avg
-                data_types = ['tsp_avg']
-        elif tke_budget_enabled:
-            # Ensure both t_avg and tsp_avg are loaded when TKE budget is enabled
-            data_types = list(data_types)
-            if 't_avg' not in data_types:
-                data_types.append('t_avg')
-            if 'tsp_avg' not in data_types:
+            data_types = []
+
+            re_stress_enabled = (config.u_prime_sq_on or config.u_prime_v_prime_on or
+                                 config.v_prime_sq_on or config.w_prime_sq_on or config.tke_on)
+
+            tke_budget_enabled = (config.tke_budget_on or config.tke_production_on or
+                                  config.tke_dissipation_on or config.tke_convection_on or
+                                  config.tke_viscous_diffusion_on or config.tke_pressure_transport_on or
+                                  config.tke_turbulent_diffusion_on)
+
+            # tsp_avg needed for Reynolds stresses / TKE (uu11 etc.)
+            if re_stress_enabled or tke_budget_enabled:
                 data_types.append('tsp_avg')
+
+            # t_avg needed for TKE budget gradient terms
+            if tke_budget_enabled:
+                data_types.append('t_avg')
+
+            # Profiles only: load inst as fallback, t_avg preferred (processed
+            # second so it overwrites inst when both exist)
+            if not data_types:
+                data_types = ['inst', 't_avg']
         print(f"Using XDMF data loader with data_types={data_types}...")
         return TurbulenceXDMFData(
             config.folder_path,
@@ -1097,6 +1106,38 @@ class TurbulencePlotter:
             return [(' (x-avg)', values.mean(axis=1))]
 
     # ------------------------------------------------------------------
+    # X-direction profile extraction helpers
+    # ------------------------------------------------------------------
+    def _parse_x_profile_y_coords(self) -> List[float]:
+        """Parse the comma-separated ``x_profile_y_coords`` config string."""
+        if not self.config.x_profile_y_coords or not self.config.x_profile_y_coords.strip():
+            return []
+        return [float(s.strip()) for s in self.config.x_profile_y_coords.split(',') if s.strip()]
+
+    def _get_x_profile_y_indices(self) -> List[Tuple[int, float]]:
+        """Return list of (y-index, actual_y_value) for requested x-profile locations."""
+        y_coords = getattr(self.data_loader, 'y_coords', None)
+        if y_coords is None:
+            return []
+        requested = self._parse_x_profile_y_coords()
+        if not requested:
+            # Default: channel centreline
+            mid = len(y_coords) // 2
+            return [(mid, float(y_coords[mid]))]
+        indices = []
+        for yc in requested:
+            idx = int(np.argmin(np.abs(y_coords - yc)))
+            indices.append((idx, float(y_coords[idx])))
+        return indices
+
+    def _extract_x_profiles(self, values: np.ndarray) -> List[Tuple[str, np.ndarray]]:
+        """Extract 1-D streamwise profiles from 2-D (ny, nx) data at specified y locations."""
+        if values.ndim < 2:
+            return []
+        y_indices = self._get_x_profile_y_indices()
+        return [(f' y={yv:.3g}', values[idx, :]) for idx, yv in y_indices]
+
+    # ------------------------------------------------------------------
     # Public entry points
     # ------------------------------------------------------------------
     def plot(self, statistics: List[Union[ReStresses, Profiles, TkeBudget]], reference_data: Optional[ReferenceData] = None):
@@ -1125,9 +1166,16 @@ class TurbulencePlotter:
             if not stats_list:
                 continue
 
-            # Standard 1-D profile figures
-            fig = self._plot_class_figure(stats_list, class_titles[class_name], reference_data)
-            figures[class_name] = fig
+            # Y-direction (wall-normal) profile figures
+            if self.config.profile_direction in ('y', 'both'):
+                fig = self._plot_class_figure(stats_list, class_titles[class_name], reference_data)
+                figures[class_name] = fig
+
+            # X-direction (streamwise) profile figures
+            if self.config.profile_direction in ('x', 'both'):
+                x_fig = self._plot_x_profile_figure(stats_list, class_titles[class_name])
+                if x_fig is not None:
+                    figures[f'{class_name}_x_profile'] = x_fig
 
             # Optional 2-D surface contour figures
             if self.config.surface_plot_on:
@@ -1379,6 +1427,56 @@ class TurbulencePlotter:
                 figures[key] = fig
 
         return figures
+
+    # ------------------------------------------------------------------
+    # X-direction profile plotting
+    # ------------------------------------------------------------------
+    def _plot_x_profile_figure(self, statistics, title: str):
+        """Create a figure with streamwise (x-direction) profiles for each statistic."""
+        x_coords = getattr(self.data_loader, 'x_coords', None)
+        if x_coords is None:
+            print('No x_coords available for x-direction profiles.')
+            return None
+
+        # Filter to stats with 2-D data
+        stats_with_2d = [s for s in statistics
+                         if any(v.ndim >= 2 for v in s.processed_results.values())]
+        if not stats_with_2d:
+            return None
+
+        n_stats = len(stats_with_2d)
+        ncols = math.ceil(math.sqrt(n_stats))
+        nrows = math.ceil(n_stats / ncols)
+
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
+                                figsize=(15, 4 * nrows), constrained_layout=True)
+        fig.canvas.manager.set_window_title(f'{title} - X Profiles')
+
+        if n_stats == 1:
+            axs = np.array([[axs]])
+        elif nrows == 1 or ncols == 1:
+            axs = np.atleast_2d(axs)
+            if axs.shape[0] == 1 and nrows > 1:
+                axs = axs.T
+
+        for i, stat in enumerate(stats_with_2d):
+            ax = axs[i // ncols, i % ncols]
+            for (case, timestep), values in stat.processed_results.items():
+                profiles = self._extract_x_profiles(values)
+                for suffix, profile in profiles:
+                    color = self._get_color(case, stat.name)
+                    label = f'{case.replace("_", " = ")}{suffix}'
+                    ax.plot(x_coords, profile, label=label, color=color)
+            ax.set_title(stat.label)
+            ax.set_xlabel('$x$')
+            ax.set_ylabel(stat.name.replace('_', ' '))
+            ax.grid(True)
+            ax.legend(fontsize='small')
+
+        for i in range(n_stats, nrows * ncols):
+            axs[i // ncols, i % ncols].set_visible(False)
+
+        return fig
 
     def _plot_line(self, ax, x: np.ndarray, y: np.ndarray, label: str, color: str) -> None:
         """Plot a single line with appropriate scale"""
